@@ -1,1 +1,0 @@
-# chronic-care-management-app
