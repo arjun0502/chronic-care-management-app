@@ -1,0 +1,86 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id        String   @id @default(cuid())
+  email     String   @unique
+  name      String
+  password  String   // Hashed password (if using custom auth)
+  role      String   // "patient" or "physician"
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  
+  // Patient-specific fields
+  dob            String?
+  conditions     String[]
+  allergies      String[]
+  familyHistory  String?
+  smokingStatus  String?
+  smokingDetails String?
+  
+  // Relationships
+  measurements   Measurement[]
+  medications    Medication[]
+  
+  // Physician-Patient relationships
+  // If this user is a patient, these are their physicians
+  physicians     PhysicianPatient[] @relation("PatientPhysicians")
+  // If this user is a physician, these are their patients
+  patients       PhysicianPatient[] @relation("PhysicianPatients")
+}
+
+model PhysicianPatient {
+  id          String   @id @default(cuid())
+  physicianId String
+  patientId   String
+  createdAt   DateTime @default(now())
+  
+  physician   User     @relation("PhysicianPatients", fields: [physicianId], references: [id], onDelete: Cascade)
+  patient     User     @relation("PatientPhysicians", fields: [patientId], references: [id], onDelete: Cascade)
+  
+  @@unique([physicianId, patientId]) // Prevent duplicate relationships
+  @@index([physicianId])
+  @@index([patientId])
+}
+
+model Medication {
+  id        String   @id @default(cuid())
+  userId    String
+  name      String
+  dosage    String
+  frequency String
+  createdAt DateTime @default(now())
+  
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  @@index([userId])
+}
+
+model Measurement {
+  id              String   @id @default(cuid())
+  userId          String
+  date            DateTime
+  // Blood Pressure
+  systolic        Float?
+  diastolic       Float?
+  bpRaw           Json?    // Array of {systolic: number, diastolic: number}
+  // Glucose
+  glucose         Float?
+  glucoseRaw      Json?    // Array of numbers
+  // Cholesterol
+  cholesterol     Float?
+  cholesterolRaw  Json?    // Array of numbers
+  // Weight
+  weight          Float?
+  createdAt       DateTime @default(now())
+  
+  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  @@index([userId, date])
+}
