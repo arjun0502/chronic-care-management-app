@@ -38,7 +38,7 @@ model User {
   // If this user is a patient, these are their physicians
   physicians     PhysicianPatient[] @relation("PatientPhysicians")
   // If this user is a physician, these are their patients
-  patients       PhysicianPatient[] @relation("PhysicianPatients"
+  patients       PhysicianPatient[] @relation("PhysicianPatients")
 }
 
 model PhysicianPatient {

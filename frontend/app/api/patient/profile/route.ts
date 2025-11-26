@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { auth } from "@/app/api/auth/[...nextauth]/route";
+import { Medication } from "@prisma/client";
 
 export async function GET() {
   try {
@@ -76,7 +77,7 @@ export async function GET() {
         smokingHistory: user.smokingHistory,
         smokingDetails: user.smokingDetails,
         alcoholUse: user.alcoholUse,
-        medications: user.medications.map((med) => ({
+        medications: user.medications.map((med: Medication) => ({
           name: med.name,
           dosage: med.dosage,
           frequency: med.frequency,
