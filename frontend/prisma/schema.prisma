@@ -17,22 +17,28 @@ model User {
   updatedAt DateTime @updatedAt
   
   // Patient-specific fields
-  dob            String?
-  conditions     String[]
-  allergies      String[]
-  familyHistory  String?
-  smokingStatus  String?
-  smokingDetails String?
+  dob                    String?
+  sex                    String?  // "Male" or "Female"
+  height                 Float?   // Height in cm or inches
+  weight                 Float?   // Baseline weight in lbs or kg
+  conditions             String[]
+  allergies              String[]
+  familyHistoryHeartDisease String?  // Family history of heart disease
+  smokingHistory         String?  // Smoking history (e.g., "Never smoker", "Former smoker", "Current smoker")
+  smokingDetails         String?  // Details about smoking history
+  alcoholUse             String?  // Alcohol use information
   
   // Relationships
   measurements   Measurement[]
   medications    Medication[]
+  goals          Goal?
+  events         Event[]
   
   // Physician-Patient relationships
   // If this user is a patient, these are their physicians
   physicians     PhysicianPatient[] @relation("PatientPhysicians")
   // If this user is a physician, these are their patients
-  patients       PhysicianPatient[] @relation("PhysicianPatients")
+  patients       PhysicianPatient[] @relation("PhysicianPatients"
 }
 
 model PhysicianPatient {
@@ -81,6 +87,39 @@ model Measurement {
   createdAt       DateTime @default(now())
   
   user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  @@index([userId, date])
+}
+
+model Goal {
+  id              String   @id @default(cuid())
+  userId          String   @unique
+  // Blood Pressure Goals
+  systolicGoal    Float?
+  diastolicGoal   Float?
+  // Other Goals
+  weightGoal      Float?
+  glucoseGoal     Float?
+  cholesterolGoal Float?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  createdBy       String?  // Physician who set the goal
+  
+  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  @@index([userId])
+}
+
+model Event {
+  id          String   @id @default(cuid())
+  userId      String
+  date        DateTime
+  title       String
+  description String?
+  type        String?  // "medication_change", "procedure", "symptom", etc.
+  createdAt   DateTime @default(now())
+  
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   
   @@index([userId, date])
 }

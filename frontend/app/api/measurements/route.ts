@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { auth } from "@/app/api/auth/[...nextauth]/route";
 import { prisma } from "@/lib/prisma";
 
 // Helper function to calculate average
@@ -13,16 +14,18 @@ function calculateAverage(values: (string | number)[]): number {
 
 export async function POST(request: NextRequest) {
   try {
-    const body = await request.json();
-    const { bloodPressure, glucose, cholesterol, dateTime, userId } = body;
-
-    // Validate userId (you'll get this from session/auth later)
-    if (!userId) {
+    // Get authenticated user
+    const session = await auth();
+    if (!session?.user?.id) {
       return NextResponse.json(
-        { success: false, error: "User ID required" },
+        { success: false, error: "Unauthorized" },
         { status: 401 }
       );
     }
+
+    const userId = session.user.id;
+    const body = await request.json();
+    const { bloodPressure, glucose, cholesterol, weight, dateTime } = body;
 
     // Calculate averages
     const avgSystolic = calculateAverage(
@@ -53,6 +56,7 @@ export async function POST(request: NextRequest) {
         glucoseRaw: glucoseRaw.length > 0 ? glucoseRaw : null,
         cholesterol: avgCholesterol > 0 ? Math.round(avgCholesterol * 10) / 10 : null,
         cholesterolRaw: cholesterolRaw.length > 0 ? cholesterolRaw : null,
+        weight: weight ? parseFloat(weight) : null,
       },
     });
 
@@ -71,17 +75,18 @@ export async function POST(request: NextRequest) {
 }
 
 // GET endpoint to retrieve measurements for a user
-export async function GET(request: NextRequest) {
+export async function GET() {
   try {
-    const { searchParams } = new URL(request.url);
-    const userId = searchParams.get("userId");
-
-    if (!userId) {
+    // Get authenticated user
+    const session = await auth();
+    if (!session?.user?.id) {
       return NextResponse.json(
-        { success: false, error: "User ID required" },
+        { success: false, error: "Unauthorized" },
         { status: 401 }
       );
     }
+
+    const userId = session.user.id;
 
     const measurements = await prisma.measurement.findMany({
       where: { userId },

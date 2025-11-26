@@ -1,6 +1,9 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
+import { useSession } from "next-auth/react";
+import { useRouter } from "next/navigation";
+import { signOut } from "next-auth/react";
 import {
   LineChart,
   Line,
@@ -12,10 +15,9 @@ import {
   ReferenceLine,
   ResponsiveContainer,
 } from "recharts";
-import { Calendar, Pill, Activity, User, Heart, MessageCircle } from "lucide-react";
+import { Calendar, Pill, Activity, User, Heart, MessageCircle, LogOut } from "lucide-react";
 
 type PhysicianStatus = "urgent" | "monitor" | "stable";
-type ViewMode = "patient" | "physician";
 type ActiveTab = "profile" | "data" | "chat" | "timeline";
 
 type BpPoint = {
@@ -23,7 +25,27 @@ type BpPoint = {
   systolic: number;
   diastolic: number;
   readable: string;
+  timestamp: number;
   event?: string;
+};
+
+type ChartDataPoint = {
+  readable: string;
+  timestamp: number;
+};
+
+type Goals = {
+  bloodPressure: string;
+  systolic: string;
+  diastolic: string;
+  weight: string;
+  glucose: string;
+  cholesterol: string;
+  systolicGoal: number;
+  diastolicGoal: number;
+  weightGoal: number | null;
+  glucoseGoal: number;
+  cholesterolGoal: number;
 };
 
 type TooltipProps = {
@@ -32,40 +54,272 @@ type TooltipProps = {
 };
 
 const CardiologyMVP = () => {
-  const [viewMode, setViewMode] = useState<ViewMode>("patient");
+  const { data: session, status } = useSession();
+  const router = useRouter();
   const [activeTab, setActiveTab] = useState<ActiveTab>("profile");
   const [selectedPatientId, setSelectedPatientId] = useState("john-smith");
-
-  // Sample patient data (for patient view and detailed physician report)
-  const patientProfile = {
-    id: "john-smith",
-    name: "John Smith",
-    dob: "1955-03-15",
-    age: 70,
-    conditions: ["Coronary Artery Disease", "Hypertension", "Type 2 Diabetes"],
-    allergies: ["Penicillin"],
-    familyHistory: "Father had MI at age 65",
-    smokingStatus: "Former smoker",
-    smokingDetails: "Quit 10 years ago, 20 pack-year history",
-    medications: [
-      { name: "Atorvastatin", dosage: "40mg", frequency: "Once daily" },
-      { name: "Metoprolol", dosage: "50mg", frequency: "Twice daily" },
-      { name: "Aspirin", dosage: "81mg", frequency: "Once daily" },
-      { name: "Lisinopril", dosage: "10mg", frequency: "Once daily" },
-    ],
-    currentMetrics: {
-      weight: "185 lbs",
-      bloodPressure: "138/85 mmHg",
-      glucose: "145 mg/dL",
-      cholesterol: "190 mg/dL",
-    },
+  
+  // State for patient profile and measurements
+  const [patientProfile, setPatientProfile] = useState<{
+    id: string;
+    name: string;
+    dob: string | null;
+    age: number | null;
+    sex: string | null;
+    height: number | null;
+    weight: number | null;
+    conditions: string[];
+    allergies: string[];
+    familyHistoryHeartDisease: string | null;
+    smokingHistory: string | null;
+    smokingDetails: string | null;
+    alcoholUse: string | null;
+    medications: Array<{ name: string; dosage: string; frequency: string }>;
+    physician: { id: string; name: string; email: string } | null;
     goals: {
-      bloodPressure: "< 130/80 mmHg",
-      weight: "175 lbs",
-      glucose: "< 130 mg/dL",
-      cholesterol: "< 200 mg/dL",
-    },
+      systolicGoal: number | null;
+      diastolicGoal: number | null;
+      weightGoal: number | null;
+      glucoseGoal: number | null;
+      cholesterolGoal: number | null;
+    } | null;
+  } | null>(null);
+  const [events, setEvents] = useState<Array<{
+    id: string;
+    date: string;
+    title: string;
+    description: string | null;
+    type: string | null;
+  }>>([]);
+  const [historicalMeasurements, setHistoricalMeasurements] = useState<Array<{
+    id: string;
+    userId: string;
+    date: string;
+    systolic: number | null;
+    diastolic: number | null;
+    glucose: number | null;
+    cholesterol: number | null;
+    weight: number | null;
+  }>>([]);
+  const [loadingData, setLoadingData] = useState(true);
+
+  // State for measurements (3 measurements per metric) - must be before any returns
+  const [measurements, setMeasurements] = useState({
+    bloodPressure: [
+      { systolic: "", diastolic: "" },
+      { systolic: "", diastolic: "" },
+      { systolic: "", diastolic: "" },
+    ],
+    glucose: ["", "", ""],
+    cholesterol: ["", "", ""],
+    weight: "",
+    dateTime: new Date().toISOString().slice(0, 16),
+  });
+
+  // Redirect to login if not authenticated
+  useEffect(() => {
+    if (status === "unauthenticated") {
+      router.push("/login");
+    }
+  }, [status, router]);
+
+  // Fetch patient profile and measurements
+  useEffect(() => {
+    const fetchPatientData = async () => {
+      if (status !== "authenticated" || !session?.user?.id) return;
+      
+      // Only fetch for patients
+      if (session.user.role !== "patient") {
+        setLoadingData(false);
+        return;
+      }
+
+      try {
+        setLoadingData(true);
+        
+        // Fetch patient profile
+        const profileResponse = await fetch("/api/patient/profile");
+        if (profileResponse.ok) {
+          const profileData = await profileResponse.json();
+          if (profileData.success) {
+            setPatientProfile(profileData.data);
+          }
+        }
+
+        // Fetch measurements
+        const measurementsResponse = await fetch("/api/measurements");
+        if (measurementsResponse.ok) {
+          const measurementsData = await measurementsResponse.json();
+          if (measurementsData.success) {
+            setHistoricalMeasurements(measurementsData.data || []);
+          }
+        }
+
+        // Fetch events
+        const eventsResponse = await fetch("/api/patient/events");
+        if (eventsResponse.ok) {
+          const eventsData = await eventsResponse.json();
+          if (eventsData.success) {
+            setEvents(eventsData.data || []);
+          }
+        }
+      } catch (error) {
+        console.error("Error fetching patient data:", error);
+      } finally {
+        setLoadingData(false);
+      }
+    };
+
+    fetchPatientData();
+  }, [status, session]);
+
+  // Show loading while checking auth
+  if (status === "loading") {
+    return (
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto"></div>
+          <p className="mt-4 text-gray-600">Loading...</p>
+        </div>
+      </div>
+    );
+  }
+
+  // Don't render if not authenticated (will redirect)
+  if (status === "unauthenticated" || !session) {
+    return null;
+  }
+
+  // Determine view based on user role
+  const userRole = session.user?.role as "patient" | "physician";
+  const isPatient = userRole === "patient";
+  const isPhysician = userRole === "physician";
+
+  // Show loading state while fetching data
+  if (loadingData && isPatient) {
+    return (
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto"></div>
+          <p className="mt-4 text-gray-600">Loading your data...</p>
+        </div>
+      </div>
+    );
+  }
+
+  // Get latest measurements for current metrics
+  const getLatestMeasurement = () => {
+    if (historicalMeasurements.length === 0) return null;
+    return historicalMeasurements[0]; // Already sorted by date desc
   };
+
+  const latestMeasurement = getLatestMeasurement();
+  
+  // Calculate current metrics from latest measurement, with weight fallback to profile weight
+  // Separate systolic and diastolic for BP
+  const currentMetrics = latestMeasurement ? {
+    weight: latestMeasurement.weight 
+      ? `${Math.round(latestMeasurement.weight)} lbs`
+      : (patientProfile?.weight ? `${Math.round(patientProfile.weight)} lbs` : "N/A"),
+    systolic: latestMeasurement.systolic 
+      ? `${Math.round(latestMeasurement.systolic)} mmHg`
+      : "N/A",
+    diastolic: latestMeasurement.diastolic 
+      ? `${Math.round(latestMeasurement.diastolic)} mmHg`
+      : "N/A",
+    glucose: latestMeasurement.glucose ? `${Math.round(latestMeasurement.glucose)} mg/dL` : "N/A",
+    cholesterol: latestMeasurement.cholesterol ? `${Math.round(latestMeasurement.cholesterol)} mg/dL` : "N/A",
+  } : {
+    weight: patientProfile?.weight ? `${Math.round(patientProfile.weight)} lbs` : "N/A",
+    systolic: "N/A",
+    diastolic: "N/A",
+    glucose: "N/A",
+    cholesterol: "N/A",
+  };
+
+  // Use personalized goals from database, fallback to defaults
+  // Separate systolic and diastolic goals for display
+  const goals: Goals = patientProfile?.goals ? {
+    bloodPressure: patientProfile.goals.systolicGoal && patientProfile.goals.diastolicGoal
+      ? `< ${patientProfile.goals.systolicGoal}/${patientProfile.goals.diastolicGoal} mmHg`
+      : patientProfile.goals.systolicGoal
+      ? `< ${patientProfile.goals.systolicGoal}/80 mmHg`
+      : "< 130/80 mmHg",
+    systolic: patientProfile.goals.systolicGoal ? `< ${patientProfile.goals.systolicGoal} mmHg` : "< 130 mmHg",
+    diastolic: patientProfile.goals.diastolicGoal ? `< ${patientProfile.goals.diastolicGoal} mmHg` : "< 80 mmHg",
+    weight: patientProfile.goals.weightGoal ? `${patientProfile.goals.weightGoal} lbs` : "Not set",
+    glucose: patientProfile.goals.glucoseGoal ? `< ${patientProfile.goals.glucoseGoal} mg/dL` : "< 130 mg/dL",
+    cholesterol: patientProfile.goals.cholesterolGoal ? `< ${patientProfile.goals.cholesterolGoal} mg/dL` : "< 200 mg/dL",
+    // Raw goal values for comparisons
+    systolicGoal: patientProfile.goals.systolicGoal || 130,
+    diastolicGoal: patientProfile.goals.diastolicGoal || 80,
+    weightGoal: patientProfile.goals.weightGoal,
+    glucoseGoal: patientProfile.goals.glucoseGoal || 130,
+    cholesterolGoal: patientProfile.goals.cholesterolGoal || 200,
+  } : {
+    bloodPressure: "< 130/80 mmHg",
+    systolic: "< 130 mmHg",
+    diastolic: "< 80 mmHg",
+    weight: "Not set",
+    glucose: "< 130 mg/dL",
+    cholesterol: "< 200 mg/dL",
+    systolicGoal: 130,
+    diastolicGoal: 80,
+    weightGoal: null,
+    glucoseGoal: 130,
+    cholesterolGoal: 200,
+  };
+
+  // Convert historical measurements to chart data format
+  // For weight: use measurement weight or fallback to profile weight
+  const profileWeight = patientProfile?.weight || null;
+  
+  const bpData: BpPoint[] = historicalMeasurements
+    .filter(m => m.systolic !== null && m.diastolic !== null)
+    .slice(0, 20) // Last 20 measurements
+    .reverse() // Oldest first for chart
+    .map((m) => {
+      const date = new Date(m.date);
+      const month = date.getMonth() + 1;
+      const day = date.getDate();
+      return {
+        date: `${month}/${day}`,
+        systolic: m.systolic as number,
+        diastolic: m.diastolic as number,
+        readable: date.toLocaleDateString("en-US", { month: "short", day: "numeric" }),
+        timestamp: date.getTime(), // For event line positioning
+      };
+    });
+
+  // Cholesterol chart data
+  const cholesterolData = historicalMeasurements
+    .filter(m => m.cholesterol !== null)
+    .slice(0, 20)
+    .reverse()
+    .map((m) => {
+      const date = new Date(m.date);
+      return {
+        date: `${date.getMonth() + 1}/${date.getDate()}`,
+        cholesterol: m.cholesterol as number,
+        readable: date.toLocaleDateString("en-US", { month: "short", day: "numeric" }),
+        timestamp: date.getTime(),
+      };
+    });
+
+  // Weight chart data (use measurement weight, fallback to profile weight if available)
+  const weightData = historicalMeasurements
+    .filter(m => m.weight !== null || profileWeight !== null)
+    .slice(0, 20)
+    .reverse()
+    .map((m) => {
+      const date = new Date(m.date);
+      return {
+        date: `${date.getMonth() + 1}/${date.getDate()}`,
+        weight: m.weight !== null ? m.weight : profileWeight,
+        readable: date.toLocaleDateString("en-US", { month: "short", day: "numeric" }),
+        timestamp: date.getTime(),
+      };
+    });
 
   // Physician dashboard patients
   const physicianPatients: {
@@ -118,22 +372,6 @@ const CardiologyMVP = () => {
   const selectedPatient =
     physicianPatients.find((p) => p.id === selectedPatientId) || physicianPatients[0];
 
-  // Sample BP data with events (for John Smith)
-  const bpData: BpPoint[] = [
-    { date: "10/1", systolic: 145, diastolic: 90, readable: "Oct 1" },
-    { date: "10/8", systolic: 142, diastolic: 88, readable: "Oct 8" },
-    { date: "10/15", systolic: 140, diastolic: 86, readable: "Oct 15" },
-    {
-      date: "10/22",
-      systolic: 138,
-      diastolic: 85,
-      readable: "Oct 22",
-      event: "Started Lisinopril 10mg",
-    },
-    { date: "10/29", systolic: 135, diastolic: 82, readable: "Oct 29" },
-    { date: "11/5", systolic: 132, diastolic: 80, readable: "Nov 5" },
-    { date: "11/12", systolic: 130, diastolic: 78, readable: "Nov 12" },
-  ];
 
   const CustomTooltip = ({ active, payload }: TooltipProps) => {
     if (active && payload && payload.length) {
@@ -152,80 +390,260 @@ const CardiologyMVP = () => {
     return null;
   };
 
-  const renderBPChart = () => (
-    <ResponsiveContainer width="100%" height={320}>
-      <LineChart data={bpData} margin={{ top: 5, right: 30, left: 20, bottom: 5 }}>
-        <CartesianGrid strokeDasharray="3 3" />
-        <XAxis dataKey="readable" />
-        <YAxis
-          domain={[60, 160]}
-          label={{ value: "mmHg", angle: -90, position: "insideLeft" }}
-        />
-        <Tooltip content={<CustomTooltip />} />
-        <Legend />
-        <ReferenceLine y={130} stroke="#ef4444" strokeDasharray="3 3" label="Systolic Goal" />
-        <ReferenceLine y={80} stroke="#22c55e" strokeDasharray="3 3" label="Diastolic Goal" />
-        <Line type="monotone" dataKey="systolic" stroke="#3b82f6" strokeWidth={3} name="Systolic BP" />
-        <Line
-          type="monotone"
-          dataKey="diastolic"
-          stroke="#22c55e"
-          strokeWidth={3}
-          name="Diastolic BP"
-        />
-      </LineChart>
-    </ResponsiveContainer>
-  );
-
-  const renderCurrentMetricsVsGoals = () => (
-    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-      {Object.keys(patientProfile.currentMetrics).map((metric) => {
-        const metricName = metric
-          .replace(/([A-Z])/g, " $1")
-          .replace(/^./, (str) => str.toUpperCase());
-
-        // Fixing type safety, avoid using 'any'
-        const current = patientProfile.currentMetrics[metric as keyof typeof patientProfile.currentMetrics];
-        const goal = patientProfile.goals[metric as keyof typeof patientProfile.goals];
-
-        let isAtGoal = false;
-        if (metric === "bloodPressure") {
-          const systolic = parseInt((current as string).split("/")[0], 10);
-          isAtGoal = systolic < 130;
-        } else if (metric === "weight") {
-          const weightVal = parseInt(current as string, 10);
-          isAtGoal = weightVal <= 175;
-        } else if (metric === "glucose") {
-          const glucoseVal = parseInt(current as string, 10);
-          isAtGoal = glucoseVal < 130;
-        } else {
-          const cholVal = parseInt(current as string, 10);
-          isAtGoal = cholVal < 200;
-        }
-
+  // Get event lines for charts
+  const getEventLines = (chartData: ChartDataPoint[]) => {
+    if (chartData.length === 0) return [];
+    
+    return events
+      .filter((event) => {
+        const eventDate = new Date(event.date).getTime();
+        const firstDataPoint = chartData[0].timestamp;
+        const lastDataPoint = chartData[chartData.length - 1].timestamp;
+        return eventDate >= firstDataPoint && eventDate <= lastDataPoint;
+      })
+      .map((event) => {
+        const eventDate = new Date(event.date);
+        // Find the index in chartData closest to this event
+        const closestIndex = chartData.reduce((closest, point, index) => {
+          const eventTime = eventDate.getTime();
+          const currentDiff = Math.abs(point.timestamp - eventTime);
+          const closestDiff = Math.abs(chartData[closest].timestamp - eventTime);
+          return currentDiff < closestDiff ? index : closest;
+        }, 0);
+        
         return (
-          <div
-            key={metric}
-            className={`p-4 rounded-lg ${isAtGoal ? "bg-green-50" : "bg-yellow-50"}`}
-          >
-            <p className="text-sm text-gray-600 mb-1">{metricName}</p>
-            <p className="text-2xl font-bold text-gray-800">{current}</p>
-            <p className="text-sm mt-1">
-              <span className="text-gray-600">Goal: </span>
-              <span className="font-medium">{goal}</span>
-            </p>
-            <div className="mt-2">
-              {isAtGoal ? (
-                <span className="text-green-600 text-sm font-medium">✓ At Goal</span>
-              ) : (
-                <span className="text-orange-600 text-sm font-medium">⚠ Above Goal</span>
+          <ReferenceLine
+            key={event.id}
+            x={chartData[closestIndex]?.readable}
+            stroke="#f59e0b"
+            strokeWidth={2}
+            strokeDasharray="5 5"
+            label={{ value: event.title, position: "top", fill: "#f59e0b", fontSize: 12 }}
+          />
+        );
+      });
+  };
+
+  const renderBPChart = () => {
+    if (bpData.length === 0) {
+      return (
+        <div className="flex items-center justify-center h-80 bg-gray-50 rounded-lg">
+          <p className="text-gray-500">No blood pressure data available yet. Record your first measurement to see trends here.</p>
+        </div>
+      );
+    }
+    const sysGoal = goals.systolicGoal || 130;
+    const diaGoal = goals.diastolicGoal || 80;
+    
+    return (
+      <ResponsiveContainer width="100%" height={320}>
+        <LineChart data={bpData} margin={{ top: 20, right: 30, left: 20, bottom: 5 }}>
+          <CartesianGrid strokeDasharray="3 3" />
+          <XAxis dataKey="readable" />
+          <YAxis
+            domain={[60, 160]}
+            label={{ value: "mmHg", angle: -90, position: "insideLeft" }}
+          />
+          <Tooltip content={<CustomTooltip />} />
+          <Legend />
+          <ReferenceLine y={sysGoal} stroke="#ef4444" strokeDasharray="3 3" label="Systolic Goal" />
+          <ReferenceLine y={diaGoal} stroke="#22c55e" strokeDasharray="3 3" label="Diastolic Goal" />
+          {getEventLines(bpData)}
+          <Line type="monotone" dataKey="systolic" stroke="#3b82f6" strokeWidth={3} name="Systolic BP" />
+          <Line
+            type="monotone"
+            dataKey="diastolic"
+            stroke="#22c55e"
+            strokeWidth={3}
+            name="Diastolic BP"
+          />
+        </LineChart>
+      </ResponsiveContainer>
+    );
+  };
+
+  const renderCholesterolChart = () => {
+    if (cholesterolData.length === 0) {
+      return (
+        <div className="flex items-center justify-center h-80 bg-gray-50 rounded-lg">
+          <p className="text-gray-500">No cholesterol data available yet.</p>
+        </div>
+      );
+    }
+    const cholGoal = goals.cholesterolGoal || 200;
+    
+    return (
+      <ResponsiveContainer width="100%" height={320}>
+        <LineChart data={cholesterolData} margin={{ top: 20, right: 30, left: 20, bottom: 5 }}>
+          <CartesianGrid strokeDasharray="3 3" />
+          <XAxis dataKey="readable" />
+          <YAxis
+            label={{ value: "mg/dL", angle: -90, position: "insideLeft" }}
+          />
+          <Tooltip />
+          <Legend />
+          <ReferenceLine y={cholGoal} stroke="#ef4444" strokeDasharray="3 3" label="Goal" />
+          {getEventLines(cholesterolData)}
+          <Line type="monotone" dataKey="cholesterol" stroke="#8b5cf6" strokeWidth={3} name="Cholesterol" />
+        </LineChart>
+      </ResponsiveContainer>
+    );
+  };
+
+  const renderWeightChart = () => {
+    if (weightData.length === 0 && !profileWeight) {
+      return (
+        <div className="flex items-center justify-center h-80 bg-gray-50 rounded-lg">
+          <p className="text-gray-500">No weight data available yet.</p>
+        </div>
+      );
+    }
+    const weightGoal = goals.weightGoal;
+    
+    return (
+      <ResponsiveContainer width="100%" height={320}>
+        <LineChart data={weightData.length > 0 ? weightData : [{ readable: "Profile", weight: profileWeight }]} margin={{ top: 20, right: 30, left: 20, bottom: 5 }}>
+          <CartesianGrid strokeDasharray="3 3" />
+          <XAxis dataKey="readable" />
+          <YAxis
+            label={{ value: "lbs", angle: -90, position: "insideLeft" }}
+          />
+          <Tooltip />
+          <Legend />
+          {weightGoal && (
+            <ReferenceLine y={weightGoal} stroke="#ef4444" strokeDasharray="3 3" label="Goal" />
+          )}
+          {weightData.length > 0 && getEventLines(weightData)}
+          <Line type="monotone" dataKey="weight" stroke="#10b981" strokeWidth={3} name="Weight" />
+        </LineChart>
+      </ResponsiveContainer>
+    );
+  };
+
+  const renderCurrentMetricsVsGoals = () => {
+    const metrics = [
+      { key: "systolic", label: "Systolic Blood Pressure", current: currentMetrics.systolic, goal: goals.systolic, goalValue: goals.systolicGoal },
+      { key: "diastolic", label: "Diastolic Blood Pressure", current: currentMetrics.diastolic, goal: goals.diastolic, goalValue: goals.diastolicGoal },
+      { key: "weight", label: "Weight", current: currentMetrics.weight, goal: goals.weight, goalValue: goals.weightGoal },
+      { key: "glucose", label: "Glucose", current: currentMetrics.glucose, goal: goals.glucose, goalValue: goals.glucoseGoal },
+      { key: "cholesterol", label: "Cholesterol", current: currentMetrics.cholesterol, goal: goals.cholesterol, goalValue: goals.cholesterolGoal },
+    ];
+
+    return (
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        {metrics.map((metric) => {
+          let isAtGoal = false;
+          const current = metric.current;
+          const goalValue = metric.goalValue;
+
+          if (current !== "N/A" && goalValue !== null && goalValue !== undefined) {
+            if (metric.key === "systolic" || metric.key === "diastolic" || metric.key === "glucose" || metric.key === "cholesterol") {
+              const numVal = parseInt(current, 10);
+              if (metric.key === "systolic" || metric.key === "glucose" || metric.key === "cholesterol") {
+                isAtGoal = numVal < goalValue;
+              } else if (metric.key === "diastolic") {
+                isAtGoal = numVal < goalValue;
+              }
+            } else if (metric.key === "weight") {
+              const weightVal = parseFloat(current);
+              isAtGoal = weightVal <= goalValue;
+            }
+          }
+
+          return (
+            <div
+              key={metric.key}
+              className={`p-4 rounded-lg ${current === "N/A" ? "bg-gray-50" : isAtGoal ? "bg-green-50" : "bg-yellow-50"}`}
+            >
+              <p className="text-sm text-gray-600 mb-1">{metric.label}</p>
+              <p className="text-2xl font-bold text-gray-800">{current}</p>
+              <p className="text-sm mt-1">
+                <span className="text-gray-600">Goal: </span>
+                <span className="font-medium">{metric.goal}</span>
+              </p>
+              {current !== "N/A" && goalValue !== null && goalValue !== undefined && (
+                <div className="mt-2">
+                  {isAtGoal ? (
+                    <span className="text-green-600 text-sm font-medium">✓ At Goal</span>
+                  ) : (
+                    <span className="text-orange-600 text-sm font-medium">⚠ Above Goal</span>
+                  )}
+                </div>
               )}
             </div>
-          </div>
-        );
-      })}
-    </div>
-  );
+          );
+        })}
+      </div>
+    );
+  };
+
+  // Form submission handler
+  const handleSubmitMeasurements = async () => {
+    // Validate that at least one measurement is provided
+    const hasBP = measurements.bloodPressure.some(bp => bp.systolic && bp.diastolic);
+    const hasGlucose = measurements.glucose.some(g => g);
+    const hasCholesterol = measurements.cholesterol.some(c => c);
+
+    if (!hasBP && !hasGlucose && !hasCholesterol) {
+      alert("Please enter at least one measurement");
+      return;
+    }
+
+    // Get userId from session
+    const userId = session?.user?.id;
+    if (!userId) {
+      alert("You must be logged in to save measurements");
+      return;
+    }
+
+    try {
+      const response = await fetch("/api/measurements", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          bloodPressure: measurements.bloodPressure,
+          glucose: measurements.glucose,
+          cholesterol: measurements.cholesterol,
+          weight: measurements.weight,
+          dateTime: measurements.dateTime,
+          userId,
+        }),
+      });
+
+      const data = await response.json();
+
+      if (response.ok) {
+        alert("Measurements saved successfully!");
+        // Reset form
+        setMeasurements({
+          bloodPressure: [
+            { systolic: "", diastolic: "" },
+            { systolic: "", diastolic: "" },
+            { systolic: "", diastolic: "" },
+          ],
+          glucose: ["", "", ""],
+          cholesterol: ["", "", ""],
+          weight: "",
+          dateTime: new Date().toISOString().slice(0, 16),
+        });
+        // Refresh measurements data
+        const measurementsResponse = await fetch("/api/measurements");
+        if (measurementsResponse.ok) {
+          const measurementsData = await measurementsResponse.json();
+          if (measurementsData.success) {
+            setHistoricalMeasurements(measurementsData.data || []);
+          }
+        }
+      } else {
+        alert(`Error: ${data.error || "Failed to save measurements"}`);
+      }
+    } catch (error) {
+      console.error("Error:", error);
+      alert("Error saving measurements");
+    }
+  };
 
   // ---------------- PATIENT VIEW ----------------
   const renderPatientView = () => (
@@ -281,7 +699,7 @@ const CardiologyMVP = () => {
       </div>
 
       {/* Patient Profile Tab */}
-      {activeTab === "profile" && (
+      {activeTab === "profile" && patientProfile && (
         <div className="space-y-6">
           {/* Basic Info */}
           <div className="bg-white rounded-lg shadow-md p-6">
@@ -297,24 +715,61 @@ const CardiologyMVP = () => {
               <div>
                 <p className="text-sm text-gray-600">Date of Birth</p>
                 <p className="text-lg font-semibold">
-                  {patientProfile.dob} (Age {patientProfile.age})
+                  {patientProfile.dob || "Not provided"} {patientProfile.age !== null ? `(Age ${patientProfile.age})` : ""}
                 </p>
               </div>
+              {patientProfile.physician && (
+                <div>
+                  <p className="text-sm text-gray-600">Primary Physician</p>
+                  <p className="text-lg font-semibold">{patientProfile.physician.name}</p>
+                  <p className="text-sm text-gray-500">{patientProfile.physician.email}</p>
+                </div>
+              )}
+              {patientProfile.sex && (
+                <div>
+                  <p className="text-sm text-gray-600">Sex</p>
+                  <p className="text-lg font-semibold">{patientProfile.sex}</p>
+                </div>
+              )}
+              {patientProfile.height !== null && (
+                <div>
+                  <p className="text-sm text-gray-600">Height</p>
+                  <p className="text-lg font-semibold">{patientProfile.height} inches</p>
+                </div>
+              )}
+              {patientProfile.weight !== null && (
+                <div>
+                  <p className="text-sm text-gray-600">Weight</p>
+                  <p className="text-lg font-semibold">{patientProfile.weight} lbs</p>
+                </div>
+              )}
               <div>
                 <p className="text-sm text-gray-600">Allergies</p>
                 <p className="text-lg font-semibold text-red-600">
-                  {patientProfile.allergies.join(", ")}
+                  {patientProfile.allergies.length > 0 ? patientProfile.allergies.join(", ") : "None"}
                 </p>
               </div>
-              <div>
-                <p className="text-sm text-gray-600">Family History</p>
-                <p className="text-lg">{patientProfile.familyHistory}</p>
-              </div>
-              <div>
-                <p className="text-sm text-gray-600">Smoking Status</p>
-                <p className="text-lg font-semibold">{patientProfile.smokingStatus}</p>
-                <p className="text-sm text-gray-500">{patientProfile.smokingDetails}</p>
-              </div>
+              {patientProfile.familyHistoryHeartDisease && (
+                <div>
+                  <p className="text-sm text-gray-600">Family History of Heart Disease</p>
+                  <p className="text-lg">{patientProfile.familyHistoryHeartDisease}</p>
+                </div>
+              )}
+              {patientProfile.smokingHistory && (
+                <div>
+                  <p className="text-sm text-gray-600">Smoking History</p>
+                  <p className="text-lg font-semibold">{patientProfile.smokingHistory}</p>
+                  {patientProfile.smokingDetails && (
+                    <p className="text-sm text-gray-500">{patientProfile.smokingDetails}</p>
+                  )}
+                </div>
+              )}
+              {patientProfile.alcoholUse && (
+                <div>
+                  <p className="text-sm text-gray-600">Alcohol Use</p>
+                  <p className="text-lg">{patientProfile.alcoholUse}</p>
+                </div>
+              )}
             </div>
           </div>
 
@@ -322,14 +777,18 @@ const CardiologyMVP = () => {
           <div className="bg-white rounded-lg shadow-md p-6">
             <h3 className="text-xl font-bold text-gray-800 mb-3">Current Conditions</h3>
             <div className="flex flex-wrap gap-2">
-              {patientProfile.conditions.map((condition, idx) => (
-                <span
-                  key={idx}
-                  className="bg-red-100 text-red-800 px-3 py-1 rounded-full text-sm font-medium"
-                >
-                  {condition}
-                </span>
-              ))}
+              {patientProfile.conditions.length > 0 ? (
+                patientProfile.conditions.map((condition, idx) => (
+                  <span
+                    key={idx}
+                    className="bg-red-100 text-red-800 px-3 py-1 rounded-full text-sm font-medium"
+                  >
+                    {condition}
+                  </span>
+                ))
+              ) : (
+                <p className="text-gray-500">No conditions listed</p>
+              )}
             </div>
           </div>
 
@@ -340,19 +799,23 @@ const CardiologyMVP = () => {
               Current Medications
             </h3>
             <div className="space-y-3">
-              {patientProfile.medications.map((med, idx) => (
-                <div
-                  key={idx}
-                  className="flex items-center justify-between p-3 bg-blue-50 rounded-lg"
-                >
-                  <div>
-                    <p className="font-semibold text-gray-800">{med.name}</p>
-                    <p className="text-sm text-gray-600">
-                      {med.dosage} - {med.frequency}
-                    </p>
+              {patientProfile.medications.length > 0 ? (
+                patientProfile.medications.map((med, idx) => (
+                  <div
+                    key={idx}
+                    className="flex items-center justify-between p-3 bg-blue-50 rounded-lg"
+                  >
+                    <div>
+                      <p className="font-semibold text-gray-800">{med.name}</p>
+                      <p className="text-sm text-gray-600">
+                        {med.dosage} - {med.frequency}
+                      </p>
+                    </div>
                   </div>
-                </div>
-              ))}
+                ))
+              ) : (
+                <p className="text-gray-500">No medications listed</p>
+              )}
             </div>
             <p className="text-xs text-gray-500 mt-4">
               Medication changes are tracked through your conversations with your care team.
@@ -379,30 +842,50 @@ const CardiologyMVP = () => {
                 <label className="block text-lg font-semibold text-gray-800 mb-3">
                   Blood Pressure
                 </label>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <div>
-                    <label className="block text-sm text-gray-600 mb-2">
-                      Systolic (top number)
-                    </label>
-                    <input
-                      type="number"
-                      placeholder="120"
-                      className="w-full px-4 py-3 text-lg border-2 border-gray-300 rounded-lg focus:border-blue-500 focus:outline-none"
-                    />
-                    <p className="text-xs text-gray-500 mt-1">mmHg</p>
+                <p className="text-xs text-gray-600 mb-4">
+                  Take 3 measurements and enter all values. We&apos;ll average them automatically.
+                </p>
+                {[0, 1, 2].map((index) => (
+                  <div key={index} className="mb-4 pb-4 border-b border-gray-200 last:border-b-0">
+                    <p className="text-sm font-medium text-gray-700 mb-2">Measurement {index + 1}</p>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <div>
+                        <label className="block text-sm text-gray-600 mb-2">
+                          Systolic (top number)
+                        </label>
+                        <input
+                          type="number"
+                          placeholder="120"
+                          value={measurements.bloodPressure[index].systolic}
+                          onChange={(e) => {
+                            const newBP = [...measurements.bloodPressure];
+                            newBP[index] = { ...newBP[index], systolic: e.target.value };
+                            setMeasurements({ ...measurements, bloodPressure: newBP });
+                          }}
+                          className="w-full px-4 py-3 text-lg border-2 border-gray-300 rounded-lg focus:border-blue-500 focus:outline-none"
+                        />
+                        <p className="text-xs text-gray-500 mt-1">mmHg</p>
+                      </div>
+                      <div>
+                        <label className="block text-sm text-gray-600 mb-2">
+                          Diastolic (bottom number)
+                        </label>
+                        <input
+                          type="number"
+                          placeholder="80"
+                          value={measurements.bloodPressure[index].diastolic}
+                          onChange={(e) => {
+                            const newBP = [...measurements.bloodPressure];
+                            newBP[index] = { ...newBP[index], diastolic: e.target.value };
+                            setMeasurements({ ...measurements, bloodPressure: newBP });
+                          }}
+                          className="w-full px-4 py-3 text-lg border-2 border-gray-300 rounded-lg focus:border-blue-500 focus:outline-none"
+                        />
+                        <p className="text-xs text-gray-500 mt-1">mmHg</p>
+                      </div>
+                    </div>
                   </div>
-                  <div>
-                    <label className="block text-sm text-gray-600 mb-2">
-                      Diastolic (bottom number)
-                    </label>
-                    <input
-                      type="number"
-                      placeholder="80"
-                      className="w-full px-4 py-3 text-lg border-2 border-gray-300 rounded-lg focus:border-blue-500 focus:outline-none"
-                    />
-                    <p className="text-xs text-gray-500 mt-1">mmHg</p>
-                  </div>
-                </div>
+                ))}
               </div>
 
               {/* Weight */}
@@ -411,6 +894,8 @@ const CardiologyMVP = () => {
                 <input
                   type="number"
                   placeholder="185"
+                  value={measurements.weight}
+                  onChange={(e) => setMeasurements({ ...measurements, weight: e.target.value })}
                   className="w-full px-4 py-3 text-lg border-2 border-gray-300 rounded-lg focus:border-green-500 focus:outline-none"
                 />
                 <p className="text-xs text-gray-500 mt-1">pounds (lbs)</p>
@@ -421,12 +906,28 @@ const CardiologyMVP = () => {
                 <label className="block text-lg font-semibold text-gray-800 mb-3">
                   Blood Glucose
                 </label>
-                <input
-                  type="number"
-                  placeholder="110"
-                  className="w-full px-4 py-3 text-lg border-2 border-gray-300 rounded-lg focus:border-purple-500 focus:outline-none"
-                />
-                <p className="text-xs text-gray-500 mt-1">mg/dL (fasting)</p>
+                <p className="text-xs text-gray-600 mb-4">
+                  Take 3 measurements and enter all values.
+                </p>
+                {[0, 1, 2].map((index) => (
+                  <div key={index} className="mb-4">
+                    <label className="block text-sm text-gray-600 mb-2">
+                      Measurement {index + 1}
+                    </label>
+                    <input
+                      type="number"
+                      placeholder="110"
+                      value={measurements.glucose[index]}
+                      onChange={(e) => {
+                        const newGlucose = [...measurements.glucose];
+                        newGlucose[index] = e.target.value;
+                        setMeasurements({ ...measurements, glucose: newGlucose });
+                      }}
+                      className="w-full px-4 py-3 text-lg border-2 border-gray-300 rounded-lg focus:border-purple-500 focus:outline-none"
+                    />
+                    <p className="text-xs text-gray-500 mt-1">mg/dL (fasting)</p>
+                  </div>
+                ))}
               </div>
 
               {/* Cholesterol */}
@@ -434,12 +935,28 @@ const CardiologyMVP = () => {
                 <label className="block text-lg font-semibold text-gray-800 mb-3">
                   Total Cholesterol
                 </label>
-                <input
-                  type="number"
-                  placeholder="180"
-                  className="w-full px-4 py-3 text-lg border-2 border-gray-300 rounded-lg focus:border-orange-500 focus:outline-none"
-                />
-                <p className="text-xs text-gray-500 mt-1">mg/dL (from lab test)</p>
+                <p className="text-xs text-gray-600 mb-4">
+                  Enter 3 measurements if available.
+                </p>
+                {[0, 1, 2].map((index) => (
+                  <div key={index} className="mb-4">
+                    <label className="block text-sm text-gray-600 mb-2">
+                      Measurement {index + 1}
+                    </label>
+                    <input
+                      type="number"
+                      placeholder="180"
+                      value={measurements.cholesterol[index]}
+                      onChange={(e) => {
+                        const newCholesterol = [...measurements.cholesterol];
+                        newCholesterol[index] = e.target.value;
+                        setMeasurements({ ...measurements, cholesterol: newCholesterol });
+                      }}
+                      className="w-full px-4 py-3 text-lg border-2 border-gray-300 rounded-lg focus:border-orange-500 focus:outline-none"
+                    />
+                    <p className="text-xs text-gray-500 mt-1">mg/dL (from lab test)</p>
+                  </div>
+                ))}
               </div>
 
               {/* Date/Time */}
@@ -449,13 +966,17 @@ const CardiologyMVP = () => {
                 </label>
                 <input
                   type="datetime-local"
-                  defaultValue={new Date().toISOString().slice(0, 16)}
+                  value={measurements.dateTime}
+                  onChange={(e) => setMeasurements({ ...measurements, dateTime: e.target.value })}
                   className="w-full px-4 py-3 text-lg border-2 border-gray-300 rounded-lg focus:border-blue-500 focus:outline-none"
                 />
               </div>
 
               {/* Submit Button */}
-              <button className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-4 px-6 rounded-lg text-lg transition-colors">
+              <button
+                onClick={handleSubmitMeasurements}
+                className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-4 px-6 rounded-lg text-lg transition-colors"
+              >
                 Save Measurements
               </button>
             </div>
@@ -547,53 +1068,51 @@ const CardiologyMVP = () => {
       {/* Timeline Tab */}
       {activeTab === "timeline" && (
         <div className="space-y-6">
+          {/* Blood Pressure Chart */}
           <div className="bg-white rounded-lg shadow-md p-6">
             <h2 className="text-2xl font-bold text-gray-800 mb-6">Blood Pressure Timeline</h2>
-
-            {/* Chart */}
             <div className="mb-4">{renderBPChart()}</div>
+          </div>
 
-            {/* Summary Stats */}
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mt-6">
-              <div className="bg-blue-50 p-4 rounded-lg">
-                <p className="text-sm text-gray-600">Average Systolic (Last 30 days)</p>
-                <p className="text-3xl font-bold text-blue-600">136</p>
-                <p className="text-sm text-gray-600 mt-1">Goal: &lt;130 mmHg</p>
-              </div>
-              <div className="bg-green-50 p-4 rounded-lg">
-                <p className="text-sm text-gray-600">Average Diastolic (Last 30 days)</p>
-                <p className="text-3xl font-bold text-green-600">83</p>
-                <p className="text-sm text-gray-600 mt-1">Goal: &lt;80 mmHg</p>
-              </div>
-              <div className="bg-orange-50 p-4 rounded-lg">
-                <p className="text-sm text-gray-600">Trend</p>
-                <p className="text-3xl font-bold text-orange-600">↓ Improving</p>
-                <p className="text-sm text-gray-600 mt-1">Since med change</p>
-              </div>
-            </div>
+          {/* Cholesterol Chart */}
+          <div className="bg-white rounded-lg shadow-md p-6">
+            <h2 className="text-2xl font-bold text-gray-800 mb-6">Cholesterol Timeline</h2>
+            <div className="mb-4">{renderCholesterolChart()}</div>
+          </div>
 
-            {/* Events List */}
-            <div className="mt-6">
+          {/* Weight Chart */}
+          <div className="bg-white rounded-lg shadow-md p-6">
+            <h2 className="text-2xl font-bold text-gray-800 mb-6">Weight Timeline</h2>
+            <div className="mb-4">{renderWeightChart()}</div>
+          </div>
+
+          {/* Events List */}
+          {events.length > 0 && (
+            <div className="bg-white rounded-lg shadow-md p-6">
               <div className="flex items-center justify-between mb-3">
                 <h3 className="text-lg font-semibold text-gray-800">Recent Events</h3>
                 <p className="text-xs text-gray-500">
-                  Events are automatically tracked from your chat conversations
+                  Events are shown as vertical lines in the charts above
                 </p>
               </div>
               <div className="space-y-2">
-                <div className="flex items-center space-x-3 p-3 bg-orange-50 rounded-lg">
-                  <div className="bg-orange-200 p-2 rounded-full">
-                    <Pill className="w-4 h-4 text-orange-800" />
+                {events.slice().reverse().map((event) => (
+                  <div key={event.id} className="flex items-center space-x-3 p-3 bg-orange-50 rounded-lg">
+                    <div className="bg-orange-200 p-2 rounded-full">
+                      <Pill className="w-4 h-4 text-orange-800" />
+                    </div>
+                    <div>
+                      <p className="font-medium text-gray-800">{event.title}</p>
+                      <p className="text-sm text-gray-600">{new Date(event.date).toLocaleDateString()}</p>
+                      {event.description && (
+                        <p className="text-xs text-gray-500 mt-1">{event.description}</p>
+                      )}
+                    </div>
                   </div>
-                  <div>
-                    <p className="font-medium text-gray-800">Started Lisinopril 10mg</p>
-                    <p className="text-sm text-gray-600">October 22, 2024</p>
-                    <p className="text-xs text-gray-500 mt-1">From chat conversation</p>
-                  </div>
-                </div>
+                ))}
               </div>
             </div>
-          </div>
+          )}
 
           {/* Current Metrics vs Goals */}
           <div className="bg-white rounded-lg shadow-md p-6">
@@ -815,39 +1334,25 @@ const CardiologyMVP = () => {
               </div>
             </div>
             <div className="flex flex-col items-start md:items-end gap-2">
-              <div className="flex items-center gap-2 text-xs text-gray-500">
-                <span>Demo workspace • Stanford Cardiology</span>
-              </div>
-              {/* View toggle */}
-              <div className="inline-flex rounded-lg border border-gray-200 bg-gray-50 overflow-hidden text-sm">
+              <div className="flex items-center gap-4">
+                <div className="text-right">
+                  <p className="text-sm font-medium text-gray-800">{session.user?.name}</p>
+                  <p className="text-xs text-gray-500 capitalize">{userRole}</p>
+                </div>
                 <button
-                  onClick={() => setViewMode("patient")}
-                  className={`px-3 py-1.5 flex items-center gap-1 transition-colors ${
-                    viewMode === "patient"
-                      ? "bg-blue-600 text-white"
-                      : "text-gray-700 hover:bg-gray-100"
-                  }`}
+                  onClick={() => signOut({ callbackUrl: "/login" })}
+                  className="flex items-center gap-2 px-3 py-2 text-sm text-red-600 hover:text-red-700 hover:bg-red-50 rounded-lg transition-colors"
                 >
-                  <User className="w-4 h-4" />
-                  Patient view
-                </button>
-                <button
-                  onClick={() => setViewMode("physician")}
-                  className={`px-3 py-1.5 flex items-center gap-1 border-l border-gray-200 transition-colors ${
-                    viewMode === "physician"
-                      ? "bg-blue-600 text-white"
-                      : "text-gray-700 hover:bg-gray-100"
-                  }`}
-                >
-                  <Activity className="w-4 h-4" />
-                  Physician view
+                  <LogOut className="w-4 h-4" />
+                  Logout
                 </button>
               </div>
             </div>
           </div>
         </div>
 
-        {viewMode === "patient" ? renderPatientView() : renderPhysicianView()}
+        {isPatient && renderPatientView()}
+        {isPhysician && renderPhysicianView()}
       </div>
     </div>
   );
