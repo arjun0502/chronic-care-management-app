@@ -106,6 +106,23 @@ export async function POST(request: NextRequest) {
       });
     }
 
+    // Create default goals for patients
+    if (role === "patient") {
+      // Use user's initial weight as weight goal if provided, otherwise null
+      const initialWeightGoal = weight ? parseFloat(weight) : null;
+      
+      await prisma.goal.create({
+        data: {
+          userId: user.id,
+          systolicGoal: 130,
+          diastolicGoal: 80,
+          weightGoal: initialWeightGoal,
+          glucoseGoal: 130,
+          cholesterolGoal: 200,
+        },
+      });
+    }
+
     return NextResponse.json({
       success: true,
       message: "User created successfully",

@@ -33,6 +33,8 @@ model User {
   medications    Medication[]
   goals          Goal?
   events         Event[]
+  chats          Chat[]
+  patientAnalysis PatientAnalysis?
   
   // Physician-Patient relationships
   // If this user is a patient, these are their physicians
@@ -116,10 +118,52 @@ model Event {
   date        DateTime
   title       String
   description String?
-  type        String?  // "medication_change", "procedure", "symptom", etc.
+  type        String?  // "medication_change", "procedure", "symptom", "lifestyle_change", "supplement", "adherence_issue", etc.
+  severity    String?  // "low", "medium", "high" - for urgency calculation
+  source      String?  // "chat", "manual", "measurement" - track where it came from
   createdAt   DateTime @default(now())
   
   user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   
   @@index([userId, date])
+}
+
+model Chat {
+  id        String   @id @default(cuid())
+  userId    String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  messages  Message[]
+  
+  @@index([userId])
+}
+
+model Message {
+  id        String   @id @default(cuid())
+  chatId    String
+  role      String   // "user" or "assistant"
+  content   String
+  createdAt DateTime @default(now())
+  
+  chat      Chat     @relation(fields: [chatId], references: [id], onDelete: Cascade)
+  
+  @@index([chatId])
+}
+
+model PatientAnalysis {
+  id          String   @id @default(cuid())
+  userId      String   @unique
+  summary     String
+  urgency     String   // "urgent", "monitor", "stable"
+  urgencyScore Int
+  reasons     String[] // Array of reason strings
+  keyConcerns String[]
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  @@index([userId])
 }
