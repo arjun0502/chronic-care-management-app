@@ -392,7 +392,6 @@ async function generatePatientAnalysis(userId: string) {
       diastolic: m.diastolic,
       weight: m.weight,
       glucose: m.glucose,
-      cholesterol: m.cholesterol,
     }));
 
     const eventsData = patient.events.map(e => ({
@@ -418,7 +417,6 @@ Goals:
 - BP: ${patient.goals?.systolicGoal || 130}/${patient.goals?.diastolicGoal || 80} mmHg
 - Weight: ${patient.goals?.weightGoal || "Not set"} lbs
 - Glucose: ${patient.goals?.glucoseGoal || 130} mg/dL
-- Cholesterol: ${patient.goals?.cholesterolGoal || 200} mg/dL
 
 Latest Measurement:
 ${latestMeasurement ? JSON.stringify({
@@ -427,7 +425,6 @@ ${latestMeasurement ? JSON.stringify({
   diastolic: latestMeasurement.diastolic,
   weight: latestMeasurement.weight,
   glucose: latestMeasurement.glucose,
-  cholesterol: latestMeasurement.cholesterol,
 }, null, 2) : "No measurements available"}
 
 Recent Measurements (last 10):

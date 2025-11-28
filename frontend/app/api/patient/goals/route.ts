@@ -59,7 +59,6 @@ export async function POST(request: NextRequest) {
       diastolicGoal,
       weightGoal,
       glucoseGoal,
-      cholesterolGoal,
     } = body;
 
     if (!patientId) {
@@ -92,7 +91,6 @@ export async function POST(request: NextRequest) {
         diastolicGoal: diastolicGoal !== undefined ? diastolicGoal : null,
         weightGoal: weightGoal !== undefined ? weightGoal : null,
         glucoseGoal: glucoseGoal !== undefined ? glucoseGoal : null,
-        cholesterolGoal: cholesterolGoal !== undefined ? cholesterolGoal : null,
         createdBy: session.user.id,
       },
       create: {
@@ -101,7 +99,6 @@ export async function POST(request: NextRequest) {
         diastolicGoal: diastolicGoal !== undefined ? diastolicGoal : null,
         weightGoal: weightGoal !== undefined ? weightGoal : null,
         glucoseGoal: glucoseGoal !== undefined ? glucoseGoal : null,
-        cholesterolGoal: cholesterolGoal !== undefined ? cholesterolGoal : null,
         createdBy: session.user.id,
       },
     });

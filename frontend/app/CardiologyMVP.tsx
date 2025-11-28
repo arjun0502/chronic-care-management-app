@@ -41,12 +41,10 @@ type Goals = {
   diastolic: string;
   weight: string;
   glucose: string;
-  cholesterol: string;
   systolicGoal: number;
   diastolicGoal: number;
   weightGoal: number | null;
   glucoseGoal: number;
-  cholesterolGoal: number;
 };
 
 type TooltipProps = {
@@ -82,7 +80,6 @@ const CardiologyMVP = () => {
       diastolicGoal: number | null;
       weightGoal: number | null;
       glucoseGoal: number | null;
-      cholesterolGoal: number | null;
     } | null;
   } | null>(null);
   const [events, setEvents] = useState<Array<{
@@ -99,7 +96,6 @@ const CardiologyMVP = () => {
     systolic: number | null;
     diastolic: number | null;
     glucose: number | null;
-    cholesterol: number | null;
     weight: number | null;
   }>>([]);
   const [loadingData, setLoadingData] = useState(true);
@@ -134,7 +130,6 @@ const CardiologyMVP = () => {
       { systolic: "", diastolic: "" },
     ],
     glucose: ["", "", ""],
-    cholesterol: ["", "", ""],
     weight: "",
     dateTime: new Date().toISOString().slice(0, 16),
   });
@@ -383,13 +378,11 @@ const CardiologyMVP = () => {
       ? `${Math.round(latestMeasurement.diastolic)} mmHg`
       : "N/A",
     glucose: latestMeasurement.glucose ? `${Math.round(latestMeasurement.glucose)} mg/dL` : "N/A",
-    cholesterol: latestMeasurement.cholesterol ? `${Math.round(latestMeasurement.cholesterol)} mg/dL` : "N/A",
   } : {
     weight: patientProfile?.weight ? `${Math.round(patientProfile.weight)} lbs` : "N/A",
     systolic: "N/A",
     diastolic: "N/A",
     glucose: "N/A",
-    cholesterol: "N/A",
   };
 
   // Use personalized goals from database (Goal table). If goals don't exist at all,
@@ -408,26 +401,22 @@ const CardiologyMVP = () => {
       ? `${patientProfile.goals.weightGoal} lbs`
       : "Not set",
     glucose: patientProfile.goals.glucoseGoal !== null ? `< ${patientProfile.goals.glucoseGoal} mg/dL` : "< 130 mg/dL",
-    cholesterol: patientProfile.goals.cholesterolGoal !== null ? `< ${patientProfile.goals.cholesterolGoal} mg/dL` : "< 200 mg/dL",
     // Raw goal values from database - use null if not set, fallback only if goals object doesn't exist
     systolicGoal: patientProfile.goals.systolicGoal ?? 130,
     diastolicGoal: patientProfile.goals.diastolicGoal ?? 80,
     // For numeric comparisons in charts, only use the weight goal stored in DB
     weightGoal: patientProfile.goals.weightGoal,
     glucoseGoal: patientProfile.goals.glucoseGoal ?? 130,
-    cholesterolGoal: patientProfile.goals.cholesterolGoal ?? 200,
   } : {
     bloodPressure: "< 130/80 mmHg",
     systolic: "< 130 mmHg",
     diastolic: "< 80 mmHg",
     weight: "Not set",
     glucose: "< 130 mg/dL",
-    cholesterol: "< 200 mg/dL",
     systolicGoal: 130,
     diastolicGoal: 80,
     weightGoal: null,
     glucoseGoal: 130,
-    cholesterolGoal: 200,
   };
 
   // Convert historical measurements to chart data format
@@ -448,21 +437,6 @@ const CardiologyMVP = () => {
         diastolic: m.diastolic as number,
         readable: date.toLocaleDateString("en-US", { month: "short", day: "numeric" }),
         timestamp: date.getTime(), // For event line positioning
-      };
-    });
-
-  // Cholesterol chart data
-  const cholesterolData = historicalMeasurements
-    .filter(m => m.cholesterol !== null)
-    .slice(0, 20)
-    .reverse()
-    .map((m) => {
-      const date = new Date(m.date);
-      return {
-        date: `${date.getMonth() + 1}/${date.getDate()}`,
-        cholesterol: m.cholesterol as number,
-        readable: date.toLocaleDateString("en-US", { month: "short", day: "numeric" }),
-        timestamp: date.getTime(),
       };
     });
 
@@ -628,68 +602,22 @@ const CardiologyMVP = () => {
             label={{ value: `Goal: ${diaGoal}`, position: "right", offset: 5 }}
           />
           {getEventLines(bpData)}
-          {/* Show only points (no connecting lines) with slightly larger, colored dots */}
+          {/* Show lines connecting points with visible colored dots */}
           <Line
             type="monotone"
             dataKey="systolic"
-            stroke="none"
+            stroke="#3b82f6"
+            strokeWidth={3}
             dot={{ r: 5, fill: "#3b82f6" }}
             name="Systolic BP"
           />
           <Line
             type="monotone"
             dataKey="diastolic"
-            stroke="none"
+            stroke="#22c55e"
+            strokeWidth={3}
             dot={{ r: 5, fill: "#22c55e" }}
             name="Diastolic BP"
-          />
-        </LineChart>
-      </ResponsiveContainer>
-    );
-  };
-
-  const renderCholesterolChart = () => {
-    if (cholesterolData.length === 0) {
-      return (
-        <div className="flex items-center justify-center h-80 bg-gray-50 rounded-lg">
-          <p className="text-gray-500">No cholesterol data available yet.</p>
-        </div>
-      );
-    }
-    // Use cholesterol goal from database (Goal table) or fall back to default if no goals row
-    const cholGoal = goals.cholesterolGoal;
-    
-    return (
-      <ResponsiveContainer width="100%" height={320}>
-        <LineChart data={cholesterolData} margin={{ top: 20, right: 80, left: 60, bottom: 30 }}>
-          <CartesianGrid strokeDasharray="3 3" />
-          <XAxis dataKey="readable">
-            <Label value="Date" position="bottom" offset={10} />
-          </XAxis>
-          <YAxis width={60}>
-            <Label
-              value="Cholesterol (mg/dL)"
-              angle={-90}
-              position="insideLeft"
-              style={{ textAnchor: "middle" }}
-            />
-          </YAxis>
-          <Tooltip />
-          {/* Single line, so legend not needed */}
-          <ReferenceLine
-            y={cholGoal}
-            stroke="#ef4444"
-            strokeDasharray="3 3"
-            label={{ value: `Goal: ${cholGoal}`, position: "right", offset: 5 }}
-          />
-          {getEventLines(cholesterolData)}
-          {/* Single series: show as points only, slightly larger, with colored dots */}
-          <Line
-            type="monotone"
-            dataKey="cholesterol"
-            stroke="none"
-            dot={{ r: 5, fill: "#8b5cf6" }}
-            name="Cholesterol"
           />
         </LineChart>
       </ResponsiveContainer>
@@ -736,11 +664,12 @@ const CardiologyMVP = () => {
             />
           )}
           {weightData.length > 0 && getEventLines(weightData)}
-          {/* Single series: show as points only, slightly larger, with colored dots */}
+          {/* Show line connecting points with visible colored dots */}
           <Line
             type="monotone"
             dataKey="weight"
-            stroke="none"
+            stroke="#10b981"
+            strokeWidth={3}
             dot={{ r: 5, fill: "#10b981" }}
             name="Weight"
           />
@@ -755,7 +684,6 @@ const CardiologyMVP = () => {
       { key: "diastolic", label: "Diastolic Blood Pressure", current: currentMetrics.diastolic, goal: goals.diastolic, goalValue: goals.diastolicGoal },
       { key: "weight", label: "Weight", current: currentMetrics.weight, goal: goals.weight, goalValue: goals.weightGoal },
       { key: "glucose", label: "Glucose", current: currentMetrics.glucose, goal: goals.glucose, goalValue: goals.glucoseGoal },
-      { key: "cholesterol", label: "Cholesterol", current: currentMetrics.cholesterol, goal: goals.cholesterol, goalValue: goals.cholesterolGoal },
     ];
 
     return (
@@ -766,9 +694,9 @@ const CardiologyMVP = () => {
           const goalValue = metric.goalValue;
 
           if (current !== "N/A" && goalValue !== null && goalValue !== undefined) {
-            if (metric.key === "systolic" || metric.key === "diastolic" || metric.key === "glucose" || metric.key === "cholesterol") {
+            if (metric.key === "systolic" || metric.key === "diastolic" || metric.key === "glucose") {
               const numVal = parseInt(current, 10);
-              if (metric.key === "systolic" || metric.key === "glucose" || metric.key === "cholesterol") {
+              if (metric.key === "systolic" || metric.key === "glucose") {
                 isAtGoal = numVal < goalValue;
               } else if (metric.key === "diastolic") {
                 isAtGoal = numVal < goalValue;
@@ -811,9 +739,8 @@ const CardiologyMVP = () => {
     // Validate that at least one measurement is provided
     const hasBP = measurements.bloodPressure.some(bp => bp.systolic && bp.diastolic);
     const hasGlucose = measurements.glucose.some(g => g);
-    const hasCholesterol = measurements.cholesterol.some(c => c);
 
-    if (!hasBP && !hasGlucose && !hasCholesterol) {
+    if (!hasBP && !hasGlucose) {
       alert("Please enter at least one measurement");
       return;
     }
@@ -834,7 +761,6 @@ const CardiologyMVP = () => {
         body: JSON.stringify({
           bloodPressure: measurements.bloodPressure,
           glucose: measurements.glucose,
-          cholesterol: measurements.cholesterol,
           weight: measurements.weight,
           dateTime: measurements.dateTime,
           userId,
@@ -853,7 +779,6 @@ const CardiologyMVP = () => {
             { systolic: "", diastolic: "" },
           ],
           glucose: ["", "", ""],
-          cholesterol: ["", "", ""],
           weight: "",
           dateTime: new Date().toISOString().slice(0, 16),
         });
@@ -1159,34 +1084,6 @@ const CardiologyMVP = () => {
                 ))}
               </div>
 
-              {/* Cholesterol */}
-              <div className="p-4 border-2 border-orange-200 rounded-lg">
-                <label className="block text-lg font-semibold text-gray-800 mb-3">
-                  Total Cholesterol
-                </label>
-                <p className="text-xs text-gray-600 mb-4">
-                  Enter 3 measurements if available.
-                </p>
-                {[0, 1, 2].map((index) => (
-                  <div key={index} className="mb-4">
-                    <label className="block text-sm text-gray-600 mb-2">
-                      Measurement {index + 1}
-                    </label>
-                    <input
-                      type="number"
-                      placeholder="180"
-                      value={measurements.cholesterol[index]}
-                      onChange={(e) => {
-                        const newCholesterol = [...measurements.cholesterol];
-                        newCholesterol[index] = e.target.value;
-                        setMeasurements({ ...measurements, cholesterol: newCholesterol });
-                      }}
-                      className="w-full px-4 py-3 text-lg border-2 border-gray-300 rounded-lg focus:border-orange-500 focus:outline-none"
-                    />
-                    <p className="text-xs text-gray-500 mt-1">mg/dL (from lab test)</p>
-                  </div>
-                ))}
-              </div>
 
               {/* Date/Time */}
               <div className="p-4 bg-gray-50 rounded-lg">
@@ -1334,12 +1231,6 @@ const CardiologyMVP = () => {
           <div className="bg-white rounded-lg shadow-md p-6">
             <h2 className="text-2xl font-bold text-gray-800 mb-6">Blood Pressure Timeline</h2>
             <div className="mb-4">{renderBPChart()}</div>
-          </div>
-
-          {/* Cholesterol Chart */}
-          <div className="bg-white rounded-lg shadow-md p-6">
-            <h2 className="text-2xl font-bold text-gray-800 mb-6">Cholesterol Timeline</h2>
-            <div className="mb-4">{renderCholesterolChart()}</div>
           </div>
 
           {/* Weight Chart */}

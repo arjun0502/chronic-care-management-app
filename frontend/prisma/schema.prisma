@@ -5,6 +5,7 @@ generator client {
 datasource db {
   provider = "postgresql"
   url      = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
 }
 
 model User {
@@ -81,9 +82,6 @@ model Measurement {
   // Glucose
   glucose         Float?
   glucoseRaw      Json?    // Array of numbers
-  // Cholesterol
-  cholesterol     Float?
-  cholesterolRaw  Json?    // Array of numbers
   // Weight
   weight          Float?
   createdAt       DateTime @default(now())
@@ -102,7 +100,6 @@ model Goal {
   // Other Goals
   weightGoal      Float?
   glucoseGoal     Float?
-  cholesterolGoal Float?
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
   createdBy       String?  // Physician who set the goal

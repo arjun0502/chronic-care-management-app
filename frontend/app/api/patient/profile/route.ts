@@ -92,7 +92,6 @@ export async function GET() {
           diastolicGoal: user.goals.diastolicGoal,
           weightGoal: user.goals.weightGoal,
           glucoseGoal: user.goals.glucoseGoal,
-          cholesterolGoal: user.goals.cholesterolGoal,
         } : null,
       },
     });

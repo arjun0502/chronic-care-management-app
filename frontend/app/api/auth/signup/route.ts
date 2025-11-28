@@ -118,7 +118,6 @@ export async function POST(request: NextRequest) {
           diastolicGoal: 80,
           weightGoal: initialWeightGoal,
           glucoseGoal: 130,
-          cholesterolGoal: 200,
         },
       });
     }

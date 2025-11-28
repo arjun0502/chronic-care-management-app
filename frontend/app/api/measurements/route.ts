@@ -25,7 +25,7 @@ export async function POST(request: NextRequest) {
 
     const userId = session.user.id;
     const body = await request.json();
-    const { bloodPressure, glucose, cholesterol, weight, dateTime } = body;
+    const { bloodPressure, glucose, weight, dateTime } = body;
 
     // Calculate averages
     const avgSystolic = calculateAverage(
@@ -35,14 +35,12 @@ export async function POST(request: NextRequest) {
       bloodPressure.map((bp: { diastolic: string }) => bp.diastolic).filter((v: string) => v)
     );
     const avgGlucose = calculateAverage(glucose.filter((g: string) => g));
-    const avgCholesterol = calculateAverage(cholesterol.filter((c: string) => c));
 
     // Filter out empty measurements for raw data
     const bpRaw = bloodPressure.filter(
       (bp: { systolic: string; diastolic: string }) => bp.systolic && bp.diastolic
     );
     const glucoseRaw = glucose.filter((g: string) => g);
-    const cholesterolRaw = cholesterol.filter((c: string) => c);
 
     // Save to database
     const measurement = await prisma.measurement.create({
@@ -54,8 +52,6 @@ export async function POST(request: NextRequest) {
         bpRaw: bpRaw.length > 0 ? bpRaw : null,
         glucose: avgGlucose > 0 ? Math.round(avgGlucose * 10) / 10 : null,
         glucoseRaw: glucoseRaw.length > 0 ? glucoseRaw : null,
-        cholesterol: avgCholesterol > 0 ? Math.round(avgCholesterol * 10) / 10 : null,
-        cholesterolRaw: cholesterolRaw.length > 0 ? cholesterolRaw : null,
         weight: weight ? parseFloat(weight) : null,
       },
     });
