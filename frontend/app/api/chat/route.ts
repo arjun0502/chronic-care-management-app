@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/app/api/auth/[...nextauth]/route";
 import { prisma } from "@/lib/prisma";
 import OpenAI from "openai";
+import { Prisma } from "@prisma/client";
 
 // Initialize OpenAI client
 const openai = process.env.OPENAI_API_KEY
@@ -10,7 +11,7 @@ const openai = process.env.OPENAI_API_KEY
     })
   : null;
 
-// JSON Schema for structured output
+// JSON Schema for structured output (chat-level, no events; events come from end-of-conversation analysis)
 const responseSchema = {
   type: "object",
   properties: {
@@ -18,45 +19,12 @@ const responseSchema = {
       type: "string",
       description: "Natural, empathetic conversational response to the patient",
     },
-    events: {
-      type: "array",
-      description: "Array of significant events extracted from the patient's message",
-      items: {
-        type: "object",
-        properties: {
-          title: {
-            type: "string",
-            description: "Short event title (e.g., 'Started experiencing chest pain')",
-          },
-          type: {
-            type: "string",
-            enum: ["symptom", "medication_change", "lifestyle_change", "supplement", "adherence_issue", "other"],
-            description: "Type of event",
-          },
-          severity: {
-            type: "string",
-            enum: ["low", "medium", "high"],
-            description: "Severity level of the event",
-          },
-          date: {
-            type: "string",
-            description: "ISO date string in YYYY-MM-DD format or 'today' for today's date",
-          },
-          description: {
-            type: "string",
-            description: "Brief description of the event (can be empty string if not needed)",
-          },
-        },
-        required: ["title", "type", "severity", "date", "description"],
-        additionalProperties: false,
-      },
-    },
     conversationEnding: {
       type: "boolean",
       description: "True if the patient is indicating the conversation is ending. Look for: 'nope', 'no', 'nothing else', 'that's all', 'I'm good', 'all set', 'no thanks', 'I'm done', 'done', 'finished', goodbye phrases, or when they decline further questions in response to 'anything else?' type questions.",
     },
   },
-  required: ["message", "events", "conversationEnding"],
+  required: ["message", "conversationEnding"],
   additionalProperties: false,
 };
 
@@ -139,13 +107,25 @@ export async function POST(request: NextRequest) {
     const openaiMessages: Array<{ role: "system" | "user" | "assistant"; content: string }> = [
       {
         role: "system",
-        content: `You are a helpful and empathetic healthcare assistant for a cardiac care patient.
+        content: `You are a helpful and empathetic healthcare assistant for a cardiac care patient. Your role is PURELY INFORMATION GATHERING - you do NOT diagnose, provide medical advice, or suggest treatments.
 
-Your role:
-- Listen to symptoms and ask thoughtful follow-up questions
-- Collect information about lifestyle factors (diet, exercise, sleep, smoking)
-- Ask about medication adherence and new medications/supplements
-- Be conversational, warm, and ask one question at a time
+Your primary goals (in this order):
+1. When the patient reports a symptom, FIRST understand the symptom itself (onset, change over time, frequency, severity, constant vs. intermittent, triggers/relievers, impact on daily life).
+2. AFTER the symptom is clear, explore contributors: diet, exercise, sleep, smoking/alcohol, and stress.
+3. THEN ask about medications: new meds/supplements, adherence (missed doses, timing issues, self-stopped meds), and dose/frequency changes.
+4. Keep the focus on gathering information for the care team, not giving advice.
+
+IMPORTANT BOUNDARIES (always follow):
+- Do NOT diagnose conditions or symptoms or give treatment/medication advice.
+- Do NOT suggest specific lifestyle changes as solutions.
+- DO ask clarifying questions and connect symptoms to lifestyle/medication context.
+
+Your approach:
+- Be conversational, warm, and empathetic.
+- Keep messages concise (1-3 short sentences).
+- When exploring contributors, ask about ONE factor at a time with simple questions (diet, then activity, then sleep, then medications/adherence).
+- Focus on gathering facts and context, not providing solutions.
+- Before ending the conversation, ALWAYS ask "Is there anything else you would like to share?"
 
 Patient Context:
 - Name: ${patient?.name || "Patient"}
@@ -154,16 +134,8 @@ Patient Context:
 - Goals: BP ${patient?.goals?.systolicGoal || 130}/${patient?.goals?.diastolicGoal || 80} mmHg
 
 You will respond with a JSON object containing:
-- "message": Your natural, empathetic conversational response
-- "events": An array of significant events extracted from what the PATIENT said
+- "message": Your natural, empathetic conversational response (focused on information gathering, NOT advice)
 - "conversationEnding": Boolean indicating if the conversation is ending
-
-Rules for events:
-- Only extract significant events (symptoms, medication changes, lifestyle changes, supplements, adherence issues)
-- If no events mentioned, return empty array: {"message": "...", "events": []}
-- Severity: "high" for concerning symptoms (chest pain, shortness of breath, severe BP issues), "medium" for notable changes, "low" for minor updates
-- Extract events from what the PATIENT said, not from your responses
-- For dates: Use ISO format (YYYY-MM-DD) like "2024-11-25", or "today" for today's date
 
 Rules for conversationEnding:
 - Set "conversationEnding": true if the patient indicates the conversation is ending, such as:
@@ -200,13 +172,6 @@ Rules for conversationEnding:
 
     // Call OpenAI
     let assistantMessage = "I'm having trouble processing your message right now. Please try again in a moment.";
-    let extractedEvents: Array<{
-      title: string;
-      type: string;
-      severity: string;
-      date: string;
-      description?: string;
-    }> = [];
     let conversationEnding = false;
 
     if (!openai) {
@@ -236,13 +201,11 @@ Rules for conversationEnding:
 
         const parsed = JSON.parse(content);
         assistantMessage = parsed.message || assistantMessage;
-        extractedEvents = parsed.events || [];
         conversationEnding = parsed.conversationEnding || false;
 
         console.log("OpenAI response:", { 
           message: assistantMessage, 
-          eventsCount: extractedEvents.length,
-          conversationEnding 
+          conversationEnding,
         });
       } catch (error) {
         console.error("OpenAI API error:", error);
@@ -258,30 +221,6 @@ Rules for conversationEnding:
       },
     });
 
-    // Save extracted events
-    for (const event of extractedEvents) {
-      let eventDate: Date;
-      if (event.date === "today" || !event.date) {
-        eventDate = new Date();
-      } else {
-        const parsed = new Date(event.date);
-        eventDate = isNaN(parsed.getTime()) ? new Date() : parsed;
-      }
-      eventDate.setHours(0, 0, 0, 0);
-
-      await prisma.event.create({
-        data: {
-          userId,
-          date: eventDate,
-          title: event.title,
-          description: event.description || null,
-          type: event.type,
-          severity: event.severity,
-          source: "chat",
-        },
-      });
-    }
-
     // Update chat timestamp
     await prisma.chat.update({
       where: { id: chat.id },
@@ -292,13 +231,17 @@ Rules for conversationEnding:
     // 1. AI detected conversation ending, OR
     // 2. Previous conversation timed out (abandoned chat)
     if (conversationEnding || previousConversationEnded) {
-      console.log("Conversation ending detected - generating analysis", {
+      console.log("Conversation ending detected - extracting events and generating analysis", {
         aiDetected: conversationEnding,
         timeoutDetected: previousConversationEnded,
       });
-      generatePatientAnalysis(userId).catch((error) => {
-        console.error("Error generating patient analysis:", error);
-      });
+
+      // Run conversation-level event extraction, then analysis (fire-and-forget)
+      extractConversationEvents(userId, chat.id)
+        .then(() => generatePatientAnalysis(userId))
+        .catch((error) => {
+          console.error("Error in conversation event extraction or analysis:", error);
+        });
     }
 
     return NextResponse.json({
@@ -306,7 +249,7 @@ Rules for conversationEnding:
       data: {
         chatId: chat.id,
         message: assistantMessage,
-        events: extractedEvents,
+        events: [], // events now come only from end-of-conversation analysis
       },
     });
   } catch (error) {
@@ -362,6 +305,134 @@ export async function GET(request: NextRequest) {
       { success: false, error: "Failed to fetch chat" },
       { status: 500 }
     );
+  }
+}
+
+// Helper: extract 1-3 key events from full conversation history at end of conversation
+async function extractConversationEvents(userId: string, chatId: string) {
+  try {
+    if (!openai) {
+      console.error("OpenAI API key not configured - skipping conversation event extraction");
+      return;
+    }
+
+    // Get full conversation history for this chat
+    const messages = await prisma.message.findMany({
+      where: { chatId },
+      orderBy: { createdAt: "asc" },
+    });
+
+    if (messages.length === 0) return;
+
+    // Build a compact conversation transcript (user/assistant turns)
+    const transcript = messages
+      .map((m) => `${m.role.toUpperCase()}: ${m.content}`)
+      .join("\n");
+
+    const prompt = `You are a medical assistant helping summarize a cardiac care chat conversation.
+
+Your task:
+- Read the FULL conversation transcript between PATIENT and ASSISTANT.
+- Identify the ONE most important symptom/event that matters for cardiology follow-up.
+- Put the main symptom/event in "title" and "description".
+- Put lifestyle contributors (diet, activity, sleep, smoking/alcohol, stress, etc.) in "lifestyleChanges".
+- Put medication-related contributors (new meds/supplements, adherence issues, dose changes, stopped meds) in "medicationChanges".
+
+Event rules:
+- Title: the MAIN clinical symptom/event (e.g., "New onset shortness of breath").
+- Description: short description of the symptom itself (onset, pattern, severity, impact).
+- LifestyleChanges: brief bullet-style phrases for lifestyle-related factors.
+- MedicationChanges: brief bullet-style phrases for medication/adherence-related factors.
+- Date: use "today" (the system will store this event as today's date on the timeline).
+- Prefer ONE event only; do NOT list every small detail.
+
+If there are no meaningful events, return an empty array.
+
+Conversation transcript:
+${transcript}
+
+Respond ONLY in JSON with this shape:
+{
+  "events": [
+    {
+      "date": "YYYY-MM-DD or 'today'",
+      "title": "main clinical symptom/event",
+      "description": "short description of the symptom itself",
+      "lifestyleChanges": ["brief lifestyle-related changes or factors"],
+      "medicationChanges": ["brief medication-related changes or adherence issues"]
+    }
+  ]
+}`;
+
+    const completion = await openai.chat.completions.create({
+      model: "gpt-4o-mini",
+      messages: [
+        {
+          role: "system",
+          content:
+            "You are a careful clinical summarizer. Respond ONLY in valid JSON with an 'events' array as specified.",
+        },
+        {
+          role: "user",
+          content: prompt,
+        },
+      ],
+      temperature: 0.3,
+      response_format: { type: "json_object" },
+      max_tokens: 800,
+    });
+
+    const content = completion.choices[0]?.message?.content || "{}";
+    const parsed = JSON.parse(content);
+    const events = Array.isArray(parsed.events) ? parsed.events : [];
+
+    if (events.length === 0) {
+      console.log("No key events extracted from conversation");
+      return;
+    }
+
+    // Remove previous conversation-derived events for the last 30 days to avoid duplicates
+    const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+    await prisma.event.deleteMany({
+      where: {
+        userId,
+        source: "chat_conversation",
+        date: {
+          gte: thirtyDaysAgo,
+        },
+      },
+    });
+
+    const limitedEvents = events.slice(0, 1); // only 1 event per conversation
+
+    for (const event of limitedEvents) {
+      if (!event?.title) continue;
+
+      // ALWAYS default event date to today (midnight) instead of trying to infer
+      const eventDate = new Date();
+      eventDate.setHours(0, 0, 0, 0);
+
+      const lifestyleChanges = Array.isArray(event.lifestyleChanges)
+        ? event.lifestyleChanges.map((v: unknown) => String(v))
+        : [];
+      const medicationChanges = Array.isArray(event.medicationChanges)
+        ? event.medicationChanges.map((v: unknown) => String(v))
+        : [];
+
+      await prisma.event.create({
+        data: {
+          userId,
+          date: eventDate,
+          title: event.title,
+          description: event.description || null,
+          lifestyleChanges,
+          medicationChanges,
+          source: "chat_conversation",
+        } as unknown as Prisma.EventCreateInput,
+      });
+    }
+  } catch (error) {
+    console.error("Error extracting conversation events:", error);
   }
 }
 
@@ -422,25 +493,36 @@ ${JSON.stringify(
 
 Recent Events (last 30 days):
 ${JSON.stringify(
-      patient.events.map((e: { date: Date; title: string; type: string | null; severity: string | null; description: string | null }) => ({
+      (patient.events as unknown as Array<{
+        date: Date;
+        title: string;
+        description: string | null;
+        lifestyleChanges: string[];
+        medicationChanges: string[];
+      }>).map((e) => ({
         date: e.date.toISOString().split("T")[0],
         title: e.title,
-        type: e.type,
-        severity: e.severity,
-        description: e.description,
+        description: e.description ?? null,
+        lifestyleChanges: e.lifestyleChanges ?? [],
+        medicationChanges: e.medicationChanges ?? [],
       })),
       null,
       2
     )}
 
-Respond in JSON format:
+Respond in JSON format (keep it concise and skimmable):
 {
-  "summary": "2-3 paragraph clinical summary",
+  "summary": "2-3 sentence clinical summary focused on the last few weeks",
   "urgency": "urgent|monitor|stable",
   "urgencyScore": number between 0-10,
-  "reasons": ["reason 1", "reason 2", ...],
-  "keyConcerns": ["concern 1", "concern 2", ...]
+  "reasons": ["short reasons explaining WHY you chose this urgency bucket (2-4 items max)"],
+  "keyConcerns": ["very short one-line concerns the physician should keep in mind over time (1-3 items max)"]
 }
+
+Additional instructions:
+- Do NOT repeat raw measurements or events; they are already available to the physician in the dashboard.
+- Focus on compression and triage: what story should the physician see at a glance, and why is the urgency bucket appropriate?
+- Keep all text concise and easily skimmable.
 
 Urgency Guidelines:
 - "urgent": Score 8-10. Critical symptoms, high-severity events, significant deviations from goals
@@ -485,6 +567,51 @@ Urgency Guidelines:
         keyConcerns: analysis.keyConcerns || [],
       },
     });
+
+    // Optionally create or refresh key chat-derived events (at most 3) based on the analysis
+    const keyEvents = Array.isArray(analysis.keyEvents) ? analysis.keyEvents : [];
+
+    if (keyEvents.length > 0) {
+      // Remove previous chat-analysis events for the last 30 days to avoid duplicates
+      const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+      await prisma.event.deleteMany({
+        where: {
+          userId,
+          source: "chat_analysis",
+          date: {
+            gte: thirtyDaysAgo,
+          },
+        },
+      });
+
+      const limitedEvents = keyEvents.slice(0, 3); // Hard cap at 3
+
+      for (const event of limitedEvents) {
+        if (!event?.date || !event?.title) continue;
+
+        let eventDate: Date;
+        if (event.date === "today") {
+          eventDate = new Date();
+        } else {
+          const parsedDate = new Date(event.date);
+          if (isNaN(parsedDate.getTime())) continue;
+          eventDate = parsedDate;
+        }
+        eventDate.setHours(0, 0, 0, 0);
+
+        await prisma.event.create({
+          data: {
+            userId,
+            date: eventDate,
+            title: event.title,
+            description: event.description || null,
+            type: event.type || null,
+            severity: event.severity || null,
+            source: "chat_analysis",
+          },
+        });
+      }
+    }
   } catch (error) {
     console.error("Error generating patient analysis:", error);
   }

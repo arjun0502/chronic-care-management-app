@@ -54,7 +54,14 @@ export async function POST(request: NextRequest) {
     }
 
     const body = await request.json();
-    const { patientId, date, title, description, type } = body;
+    const {
+      patientId,
+      date,
+      title,
+      description,
+      lifestyleChanges,
+      medicationChanges,
+    } = body;
 
     const userId = patientId || session.user.id;
 
@@ -83,13 +90,21 @@ export async function POST(request: NextRequest) {
       }
     }
 
+    const eventDate = new Date(date);
+    eventDate.setHours(0, 0, 0, 0);
+
     const event = await prisma.event.create({
       data: {
         userId,
-        date: new Date(date),
+        date: eventDate,
         title,
         description: description || null,
-        type: type || null,
+        lifestyleChanges: Array.isArray(lifestyleChanges)
+          ? lifestyleChanges.map((v: unknown) => String(v))
+          : [],
+        medicationChanges: Array.isArray(medicationChanges)
+          ? medicationChanges.map((v: unknown) => String(v))
+          : [],
       },
     });
 

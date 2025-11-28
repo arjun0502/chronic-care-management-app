@@ -87,7 +87,8 @@ const CardiologyMVP = () => {
     date: string;
     title: string;
     description: string | null;
-    type: string | null;
+    lifestyleChanges: string[];
+    medicationChanges: string[];
   }>>([]);
   const [historicalMeasurements, setHistoricalMeasurements] = useState<Array<{
     id: string;
