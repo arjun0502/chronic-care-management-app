@@ -234,7 +234,7 @@ export default function SignupPage() {
 
               {/* Current Conditions */}
               <div>
-                <label className="block text-sm font-medium mb-2">Current Conditions</label>
+                <label className="block text-sm font-medium mb-2">Current Conditions (add one at a time)</label>
                 <div className="flex gap-2 mb-2">
                   <input
                     type="text"
@@ -273,7 +273,7 @@ export default function SignupPage() {
 
               {/* Allergies */}
               <div>
-                <label className="block text-sm font-medium mb-2">Allergies</label>
+                <label className="block text-sm font-medium mb-2">Allergies (add one at a time)</label>
                 <div className="flex gap-2 mb-2">
                   <input
                     type="text"
@@ -349,13 +349,18 @@ export default function SignupPage() {
               {/* Alcohol Use */}
               <div>
                 <label className="block text-sm font-medium mb-2">Alcohol Use</label>
-                <textarea
+                <select
                   value={formData.alcoholUse}
                   onChange={(e) => setFormData({ ...formData, alcoholUse: e.target.value })}
-                  placeholder="e.g., Occasional (1-2 drinks/week), Never, Former heavy drinker"
                   className="w-full px-4 py-2 border-2 border-gray-300 rounded-lg focus:border-blue-500 focus:outline-none"
-                  rows={2}
-                />
+                >
+                  <option value="">Select...</option>
+                  <option value="Never">Never</option>
+                  <option value="Occasional">Occasional (1-2 drinks/week)</option>
+                  <option value="Moderate">Moderate (3-7 drinks/week)</option>
+                  <option value="Heavy">Heavy (8+ drinks/week)</option>
+                  <option value="Former heavy drinker">Former heavy drinker</option>
+                </select>
               </div>
 
               {/* Current Medications */}
@@ -367,21 +372,21 @@ export default function SignupPage() {
                       type="text"
                       value={newMedication.name}
                       onChange={(e) => setNewMedication({ ...newMedication, name: e.target.value })}
-                      placeholder="Medication name"
+                      placeholder="e.g., Lisinopril"
                       className="px-4 py-2 border-2 border-gray-300 rounded-lg focus:border-blue-500 focus:outline-none"
                     />
                     <input
                       type="text"
                       value={newMedication.dosage}
                       onChange={(e) => setNewMedication({ ...newMedication, dosage: e.target.value })}
-                      placeholder="Dosage (e.g., 40mg)"
+                      placeholder="e.g., 10mg"
                       className="px-4 py-2 border-2 border-gray-300 rounded-lg focus:border-blue-500 focus:outline-none"
                     />
                     <input
                       type="text"
                       value={newMedication.frequency}
                       onChange={(e) => setNewMedication({ ...newMedication, frequency: e.target.value })}
-                      placeholder="Frequency"
+                      placeholder="e.g., Once daily"
                       className="px-4 py-2 border-2 border-gray-300 rounded-lg focus:border-blue-500 focus:outline-none"
                     />
                     <button

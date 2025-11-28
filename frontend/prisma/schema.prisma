@@ -94,12 +94,18 @@ model Measurement {
 model Goal {
   id              String   @id @default(cuid())
   userId          String   @unique
-  // Blood Pressure Goals
-  systolicGoal    Float?
-  diastolicGoal   Float?
-  // Other Goals
-  weightGoal      Float?
-  glucoseGoal     Float?
+  // Blood Pressure Goals - Range-based
+  systolicMin     Float?   // Target range minimum (e.g., 110)
+  systolicMax     Float?   // Target range maximum (e.g., 135)
+  diastolicMin    Float?   // Target range minimum (e.g., 70)
+  diastolicMax    Float?   // Target range maximum (e.g., 85)
+  // Glucose Goal - Range-based
+  glucoseMin      Float?   // Target range minimum (e.g., 70)
+  glucoseMax      Float?   // Target range maximum (e.g., 180)
+  // Weight - Baseline and alert thresholds (no goal weight)
+  weightBaseline  Float?   // Baseline weight for tracking changes
+  weightDailyAlertThreshold Float?  // Alert if daily gain > this (default: 2 lbs)
+  weightWeeklyAlertThreshold Float?  // Alert if weekly gain > this (default: 5 lbs)
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
   createdBy       String?  // Physician who set the goal

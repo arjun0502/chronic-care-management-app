@@ -34,13 +34,15 @@ export async function POST(request: NextRequest) {
     const avgDiastolic = calculateAverage(
       bloodPressure.map((bp: { diastolic: string }) => bp.diastolic).filter((v: string) => v)
     );
-    const avgGlucose = calculateAverage(glucose.filter((g: string) => g));
+    // Glucose is now a single value, not an array
+    const avgGlucose = glucose && glucose.trim() !== "" ? parseFloat(glucose) : 0;
 
     // Filter out empty measurements for raw data
     const bpRaw = bloodPressure.filter(
       (bp: { systolic: string; diastolic: string }) => bp.systolic && bp.diastolic
     );
-    const glucoseRaw = glucose.filter((g: string) => g);
+    // Glucose is now a single value, store it as an array with one element for consistency
+    const glucoseRaw = glucose && glucose.trim() !== "" ? [parseFloat(glucose)] : null;
 
     // Save to database
     const measurement = await prisma.measurement.create({
@@ -51,7 +53,7 @@ export async function POST(request: NextRequest) {
         diastolic: avgDiastolic > 0 ? Math.round(avgDiastolic * 10) / 10 : null,
         bpRaw: bpRaw.length > 0 ? bpRaw : null,
         glucose: avgGlucose > 0 ? Math.round(avgGlucose * 10) / 10 : null,
-        glucoseRaw: glucoseRaw.length > 0 ? glucoseRaw : null,
+        glucoseRaw: glucoseRaw && glucoseRaw.length > 0 ? glucoseRaw : undefined,
         weight: weight ? parseFloat(weight) : null,
       },
     });

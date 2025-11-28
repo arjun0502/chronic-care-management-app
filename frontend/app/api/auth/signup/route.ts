@@ -85,12 +85,29 @@ export async function POST(request: NextRequest) {
       });
 
       if (cardiologist) {
-        await prisma.physicianPatient.create({
-          data: {
-            physicianId: cardiologist.id,
-            patientId: user.id,
-          },
-        });
+        try {
+          // Use upsert to handle case where relationship might already exist
+          await prisma.physicianPatient.upsert({
+            where: {
+              physicianId_patientId: {
+                physicianId: cardiologist.id,
+                patientId: user.id,
+              },
+            },
+            update: {}, // No update needed if it exists
+            create: {
+              physicianId: cardiologist.id,
+              patientId: user.id,
+            },
+          });
+          console.log(`✅ Linked patient ${user.id} (${user.email}) to cardiologist ${cardiologist.id} (${cardiologist.email})`);
+        } catch (error) {
+          console.error("Error creating physician-patient relationship:", error);
+          // Don't fail the signup if this fails, but log it
+        }
+      } else {
+        console.warn("⚠️ Default cardiologist not found. Patient will not be linked to a physician.");
+        console.warn("⚠️ Run 'npx prisma db seed' to create the default cardiologist.");
       }
     }
 
@@ -106,18 +123,26 @@ export async function POST(request: NextRequest) {
       });
     }
 
-    // Create default goals for patients
+    // Create default goals for patients (range-based)
     if (role === "patient") {
-      // Use user's initial weight as weight goal if provided, otherwise null
-      const initialWeightGoal = weight ? parseFloat(weight) : null;
+      // Use user's initial weight as baseline if provided
+      const initialWeightBaseline = weight ? parseFloat(weight) : null;
       
       await prisma.goal.create({
         data: {
           userId: user.id,
-          systolicGoal: 130,
-          diastolicGoal: 80,
-          weightGoal: initialWeightGoal,
-          glucoseGoal: 130,
+          // BP ranges: SBP 110-135, DBP 70-85
+          systolicMin: 110,
+          systolicMax: 135,
+          diastolicMin: 70,
+          diastolicMax: 85,
+          // Glucose range: 70-180
+          glucoseMin: 70,
+          glucoseMax: 180,
+          // Weight: baseline and alert thresholds
+          weightBaseline: initialWeightBaseline,
+          weightDailyAlertThreshold: 2.0, // Alert if daily gain > 2 lbs
+          weightWeeklyAlertThreshold: 5.0, // Alert if weekly gain > 5 lbs
         },
       });
     }

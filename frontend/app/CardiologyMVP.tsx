@@ -13,6 +13,7 @@ import {
   Tooltip,
   Legend,
   ReferenceLine,
+  ReferenceArea,
   ResponsiveContainer,
   Label,
 } from "recharts";
@@ -36,15 +37,18 @@ type ChartDataPoint = {
 };
 
 type Goals = {
-  bloodPressure: string;
-  systolic: string;
-  diastolic: string;
-  weight: string;
-  glucose: string;
-  systolicGoal: number;
-  diastolicGoal: number;
-  weightGoal: number | null;
-  glucoseGoal: number;
+  // BP ranges
+  systolicMin: number;
+  systolicMax: number;
+  diastolicMin: number;
+  diastolicMax: number;
+  // Glucose range
+  glucoseMin: number;
+  glucoseMax: number;
+  // Weight baseline and thresholds
+  weightBaseline: number | null;
+  weightDailyAlertThreshold: number;
+  weightWeeklyAlertThreshold: number;
 };
 
 type TooltipProps = {
@@ -76,10 +80,15 @@ const CardiologyMVP = () => {
     medications: Array<{ name: string; dosage: string; frequency: string }>;
     physician: { id: string; name: string; email: string } | null;
     goals: {
-      systolicGoal: number | null;
-      diastolicGoal: number | null;
-      weightGoal: number | null;
-      glucoseGoal: number | null;
+      systolicMin: number | null;
+      systolicMax: number | null;
+      diastolicMin: number | null;
+      diastolicMax: number | null;
+      glucoseMin: number | null;
+      glucoseMax: number | null;
+      weightBaseline: number | null;
+      weightDailyAlertThreshold: number | null;
+      weightWeeklyAlertThreshold: number | null;
     } | null;
   } | null>(null);
   const [events, setEvents] = useState<Array<{
@@ -138,7 +147,7 @@ const CardiologyMVP = () => {
       { systolic: "", diastolic: "" },
       { systolic: "", diastolic: "" },
     ],
-    glucose: ["", "", ""],
+    glucose: "",
     weight: "",
     dateTime: new Date().toISOString().slice(0, 16),
   });
@@ -396,36 +405,30 @@ const CardiologyMVP = () => {
 
   // Use personalized goals from database (Goal table). If goals don't exist at all,
   // fall back to reasonable defaults, but never override what is stored in the DB.
-  // Separate systolic and diastolic goals for display.
   const goals: Goals = patientProfile?.goals ? {
-    bloodPressure: patientProfile.goals.systolicGoal !== null && patientProfile.goals.diastolicGoal !== null
-      ? `< ${patientProfile.goals.systolicGoal}/${patientProfile.goals.diastolicGoal} mmHg`
-      : patientProfile.goals.systolicGoal !== null
-      ? `< ${patientProfile.goals.systolicGoal}/${patientProfile.goals.diastolicGoal ?? 80} mmHg`
-      : "< 130/80 mmHg",
-    systolic: patientProfile.goals.systolicGoal !== null ? `< ${patientProfile.goals.systolicGoal} mmHg` : "< 130 mmHg",
-    diastolic: patientProfile.goals.diastolicGoal !== null ? `< ${patientProfile.goals.diastolicGoal} mmHg` : "< 80 mmHg",
-    // Weight goal display: use weightGoal from DB if set, otherwise show "Not set"
-    weight: patientProfile.goals.weightGoal !== null
-      ? `${patientProfile.goals.weightGoal} lbs`
-      : "Not set",
-    glucose: patientProfile.goals.glucoseGoal !== null ? `< ${patientProfile.goals.glucoseGoal} mg/dL` : "< 130 mg/dL",
-    // Raw goal values from database - use null if not set, fallback only if goals object doesn't exist
-    systolicGoal: patientProfile.goals.systolicGoal ?? 130,
-    diastolicGoal: patientProfile.goals.diastolicGoal ?? 80,
-    // For numeric comparisons in charts, only use the weight goal stored in DB
-    weightGoal: patientProfile.goals.weightGoal,
-    glucoseGoal: patientProfile.goals.glucoseGoal ?? 130,
+    // BP ranges - use DB values or defaults
+    systolicMin: patientProfile.goals.systolicMin ?? 110,
+    systolicMax: patientProfile.goals.systolicMax ?? 135,
+    diastolicMin: patientProfile.goals.diastolicMin ?? 70,
+    diastolicMax: patientProfile.goals.diastolicMax ?? 85,
+    // Glucose range
+    glucoseMin: patientProfile.goals.glucoseMin ?? 70,
+    glucoseMax: patientProfile.goals.glucoseMax ?? 180,
+    // Weight baseline and thresholds
+    weightBaseline: patientProfile.goals.weightBaseline,
+    weightDailyAlertThreshold: patientProfile.goals.weightDailyAlertThreshold ?? 2.0,
+    weightWeeklyAlertThreshold: patientProfile.goals.weightWeeklyAlertThreshold ?? 5.0,
   } : {
-    bloodPressure: "< 130/80 mmHg",
-    systolic: "< 130 mmHg",
-    diastolic: "< 80 mmHg",
-    weight: "Not set",
-    glucose: "< 130 mg/dL",
-    systolicGoal: 130,
-    diastolicGoal: 80,
-    weightGoal: null,
-    glucoseGoal: 130,
+    // Default ranges if no goals exist
+    systolicMin: 110,
+    systolicMax: 135,
+    diastolicMin: 70,
+    diastolicMax: 85,
+    glucoseMin: 70,
+    glucoseMax: 180,
+    weightBaseline: null,
+    weightDailyAlertThreshold: 2.0,
+    weightWeeklyAlertThreshold: 5.0,
   };
 
   // Convert historical measurements to chart data format
@@ -624,6 +627,33 @@ const CardiologyMVP = () => {
       });
   };
 
+  // Helper function to calculate BP summary metrics
+  const calculateBPMetrics = () => {
+    if (bpData.length === 0) return null;
+    
+    const last14Days = bpData.slice(0, 14); // Most recent 14 days
+    const last3Days = bpData.slice(0, 3);
+    
+    // Count measurements in target range
+    const inRangeCount = last14Days.filter(point => {
+      const sysInRange = point.systolic >= goals.systolicMin && point.systolic <= goals.systolicMax;
+      const diaInRange = point.diastolic >= goals.diastolicMin && point.diastolic <= goals.diastolicMax;
+      return sysInRange && diaInRange;
+    }).length;
+    
+    const percentInRange = last14Days.length > 0 ? Math.round((inRangeCount / last14Days.length) * 100) : 0;
+    
+    // Calculate 3-day averages
+    const avgSys = last3Days.length > 0 
+      ? Math.round(last3Days.reduce((sum, p) => sum + p.systolic, 0) / last3Days.length)
+      : 0;
+    const avgDia = last3Days.length > 0
+      ? Math.round(last3Days.reduce((sum, p) => sum + p.diastolic, 0) / last3Days.length)
+      : 0;
+    
+    return { percentInRange, avgSys, avgDia };
+  };
+
   const renderBPChart = () => {
     if (bpData.length === 0) {
       return (
@@ -632,62 +662,111 @@ const CardiologyMVP = () => {
         </div>
       );
     }
-    // Use goals from database (Goal table). If no goals row, fall back to defaults.
-    const sysGoal = goals.systolicGoal;
-    const diaGoal = goals.diastolicGoal;
+    
+    const metrics = calculateBPMetrics();
     
     return (
-      <ResponsiveContainer width="100%" height={320} style={{ outline: 'none' }}>
-        {/* Extra right margin so right-side goal labels are fully visible */}
-        <LineChart data={bpData} margin={{ top: 40, right: 80, left: 60, bottom: 30 }} style={{ outline: 'none' }}>
-          <CartesianGrid strokeDasharray="3 3" />
-          <XAxis dataKey="readable">
-            {/* Place Date label just below the X-axis ticks, outside the chart area */}
-            <Label value="Date" position="bottom" offset={10} />
-          </XAxis>
-          <YAxis domain={[0, 160]} width={60}>
-            <Label
-              value="Blood Pressure (mmHg)"
-              angle={-90}
-              position="insideLeft"
-              style={{ textAnchor: "middle" }}
+      <div>
+        {/* Summary Metrics */}
+        {metrics && (
+          <div className="mb-4 grid grid-cols-3 gap-4">
+            <div className="bg-blue-50 rounded-lg p-3 border border-blue-200">
+              <p className="text-xs text-gray-600 mb-1">% in Target Range (14d)</p>
+              <p className="text-lg font-bold text-blue-700">{metrics.percentInRange}%</p>
+            </div>
+            <div className="bg-blue-50 rounded-lg p-3 border border-blue-200">
+              <p className="text-xs text-gray-600 mb-1">3-Day Avg SBP</p>
+              <p className="text-lg font-bold text-blue-700">{metrics.avgSys} mmHg</p>
+            </div>
+            <div className="bg-blue-50 rounded-lg p-3 border border-blue-200">
+              <p className="text-xs text-gray-600 mb-1">3-Day Avg DBP</p>
+              <p className="text-lg font-bold text-blue-700">{metrics.avgDia} mmHg</p>
+            </div>
+          </div>
+        )}
+        
+        <ResponsiveContainer width="100%" height={320} style={{ outline: 'none' }}>
+          <LineChart data={bpData} margin={{ top: 40, right: 80, left: 60, bottom: 30 }} style={{ outline: 'none' }}>
+            <CartesianGrid strokeDasharray="3 3" />
+            <XAxis dataKey="readable">
+              <Label value="Date" position="bottom" offset={10} />
+            </XAxis>
+            <YAxis domain={[0, 160]} width={60}>
+              <Label
+                value="Blood Pressure (mmHg)"
+                angle={-90}
+                position="insideLeft"
+                style={{ textAnchor: "middle" }}
+              />
+            </YAxis>
+            <Tooltip content={<CustomTooltip />} />
+            <Legend verticalAlign="top" align="right" wrapperStyle={{ top: 0 }} />
+            
+            {/* Target range bands - green shaded areas */}
+            <ReferenceArea
+              y1={goals.systolicMin}
+              y2={goals.systolicMax}
+              fill="#86efac"
+              fillOpacity={0.3}
+              stroke="none"
             />
-          </YAxis>
-          <Tooltip content={<CustomTooltip />} />
-          <Legend verticalAlign="top" align="right" wrapperStyle={{ top: 0 }} />
-          <ReferenceLine
-            y={sysGoal}
-            stroke="#ef4444"
-            strokeDasharray="3 3"
-            label={{ value: `Goal: ${sysGoal}`, position: "right", offset: 5 }}
-          />
-          <ReferenceLine
-            y={diaGoal}
-            stroke="#22c55e"
-            strokeDasharray="3 3"
-            label={{ value: `Goal: ${diaGoal}`, position: "right", offset: 5 }}
-          />
-          {getEventLines(bpData)}
-          {/* Show lines connecting points with visible colored dots */}
-          <Line
-            type="monotone"
-            dataKey="systolic"
-            stroke="#3b82f6"
-            strokeWidth={3}
-            dot={{ r: 3, fill: "#3b82f6" }}
-            name="Systolic BP"
-          />
-          <Line
-            type="monotone"
-            dataKey="diastolic"
-            stroke="#22c55e"
-            strokeWidth={3}
-            dot={{ r: 3, fill: "#22c55e" }}
-            name="Diastolic BP"
-          />
-        </LineChart>
-      </ResponsiveContainer>
+            <ReferenceArea
+              y1={goals.diastolicMin}
+              y2={goals.diastolicMax}
+              fill="#86efac"
+              fillOpacity={0.3}
+              stroke="none"
+            />
+            
+            {getEventLines(bpData)}
+            {/* Show lines connecting points with visible colored dots */}
+            <Line
+              type="monotone"
+              dataKey="systolic"
+              stroke="#3b82f6"
+              strokeWidth={3}
+              dot={{ r: 3, fill: "#3b82f6" }}
+              name="Systolic BP"
+            />
+            <Line
+              type="monotone"
+              dataKey="diastolic"
+              stroke="#22c55e"
+              strokeWidth={3}
+              dot={{ r: 3, fill: "#22c55e" }}
+              name="Diastolic BP"
+            />
+          </LineChart>
+        </ResponsiveContainer>
+      </div>
     );
+  };
+
+  // Helper function to calculate weight summary metrics
+  const calculateWeightMetrics = () => {
+    if (weightData.length === 0) return null;
+    
+    const today = weightData[0];
+    const yesterday = weightData[1];
+    const weekAgo = weightData.find((d, idx) => {
+      if (idx === 0) return false;
+      const daysDiff = (new Date(today.timestamp).getTime() - new Date(d.timestamp).getTime()) / (1000 * 60 * 60 * 24);
+      return daysDiff >= 6 && daysDiff <= 8; // 6-8 days ago
+    });
+    
+    const change24h = yesterday && today.weight && yesterday.weight
+      ? (today.weight - yesterday.weight).toFixed(1)
+      : null;
+    
+    const change7d = weekAgo && today.weight && weekAgo.weight
+      ? (today.weight - weekAgo.weight).toFixed(1)
+      : null;
+    
+    // Check for alerts
+    const dailyAlert = change24h && Math.abs(parseFloat(change24h)) > goals.weightDailyAlertThreshold;
+    const weeklyAlert = change7d && Math.abs(parseFloat(change7d)) > goals.weightWeeklyAlertThreshold;
+    
+    return { change24h, change7d, dailyAlert, weeklyAlert };
   };
 
   const renderWeightChart = () => {
@@ -698,16 +777,15 @@ const CardiologyMVP = () => {
         </div>
       );
     }
-    // Use weight goal from database (Goal table)
-    const weightGoal = goals.weightGoal;
+    
+    const metrics = calculateWeightMetrics();
     
     // Calculate dynamic Y-axis domain with 5-lb tick increments
     const weightValues = weightData.length > 0 
       ? weightData.map(d => d.weight).filter((w): w is number => typeof w === 'number' && !isNaN(w))
       : profileWeight ? [profileWeight] : [];
-    const allWeights = weightGoal ? [...weightValues, weightGoal] : weightValues;
-    const minWeight = allWeights.length > 0 ? Math.min(...allWeights) : 150;
-    const maxWeight = allWeights.length > 0 ? Math.max(...allWeights) : 200;
+    const minWeight = weightValues.length > 0 ? Math.min(...weightValues) : 150;
+    const maxWeight = weightValues.length > 0 ? Math.max(...weightValues) : 200;
     const padding = 10; // 10 lbs padding on each side
     const yMin = Math.max(0, Math.floor((minWeight - padding) / 5) * 5); // Round down to nearest 5
     const yMax = Math.ceil((maxWeight + padding) / 5) * 5; // Round up to nearest 5
@@ -718,48 +796,99 @@ const CardiologyMVP = () => {
       ticks.push(i);
     }
     
+    // Baseline band range (±2 lbs around baseline)
+    const baselineMin = goals.weightBaseline ? goals.weightBaseline - 2 : null;
+    const baselineMax = goals.weightBaseline ? goals.weightBaseline + 2 : null;
+    
     return (
-      <ResponsiveContainer width="100%" height={320} style={{ outline: 'none' }}>
-        <LineChart
-          data={weightData.length > 0 ? weightData : [{ readable: "Profile", weight: profileWeight }]}
-          margin={{ top: 20, right: 80, left: 60, bottom: 30 }}
-          style={{ outline: 'none' }}
-        >
-          <CartesianGrid strokeDasharray="3 3" />
-          <XAxis dataKey="readable">
-            <Label value="Date" position="bottom" offset={10} />
-          </XAxis>
-          <YAxis domain={[yMin, yMax]} ticks={ticks} width={60}>
-            <Label
-              value="Weight (lbs)"
-              angle={-90}
-              position="insideLeft"
-              style={{ textAnchor: "middle" }}
+      <div>
+        {/* Summary Metrics */}
+        {metrics && (
+          <div className="mb-4 grid grid-cols-2 gap-4">
+            <div className={`rounded-lg p-3 border ${metrics.dailyAlert ? 'bg-red-50 border-red-200' : 'bg-green-50 border-green-200'}`}>
+              <p className="text-xs text-gray-600 mb-1">24h Change</p>
+              <p className={`text-lg font-bold ${metrics.dailyAlert ? 'text-red-700' : 'text-green-700'}`}>
+                {metrics.change24h ? `${parseFloat(metrics.change24h) > 0 ? '+' : ''}${metrics.change24h} lbs` : 'N/A'}
+                {metrics.dailyAlert && ' ⚠️'}
+              </p>
+            </div>
+            <div className={`rounded-lg p-3 border ${metrics.weeklyAlert ? 'bg-red-50 border-red-200' : 'bg-green-50 border-green-200'}`}>
+              <p className="text-xs text-gray-600 mb-1">7-Day Change</p>
+              <p className={`text-lg font-bold ${metrics.weeklyAlert ? 'text-red-700' : 'text-green-700'}`}>
+                {metrics.change7d ? `${parseFloat(metrics.change7d) > 0 ? '+' : ''}${metrics.change7d} lbs` : 'N/A'}
+                {metrics.weeklyAlert && ' ⚠️'}
+              </p>
+            </div>
+          </div>
+        )}
+        
+        <ResponsiveContainer width="100%" height={320} style={{ outline: 'none' }}>
+          <LineChart
+            data={weightData.length > 0 ? weightData : [{ readable: "Profile", weight: profileWeight }]}
+            margin={{ top: 20, right: 80, left: 60, bottom: 30 }}
+            style={{ outline: 'none' }}
+          >
+            <CartesianGrid strokeDasharray="3 3" />
+            <XAxis dataKey="readable">
+              <Label value="Date" position="bottom" offset={10} />
+            </XAxis>
+            <YAxis domain={[yMin, yMax]} ticks={ticks} width={60}>
+              <Label
+                value="Weight (lbs)"
+                angle={-90}
+                position="insideLeft"
+                style={{ textAnchor: "middle" }}
+              />
+            </YAxis>
+            <Tooltip />
+            
+            {/* Baseline band if baseline exists */}
+            {baselineMin && baselineMax && (
+              <ReferenceArea
+                y1={baselineMin}
+                y2={baselineMax}
+                fill="#d1d5db"
+                fillOpacity={0.2}
+                stroke="none"
+              />
+            )}
+            
+            {weightData.length > 0 && getEventLines(weightData)}
+            {/* Show line connecting points with visible colored dots */}
+            <Line
+              type="monotone"
+              dataKey="weight"
+              stroke="#10b981"
+              strokeWidth={3}
+              dot={{ r: 3, fill: "#10b981" }}
+              name="Weight"
             />
-          </YAxis>
-          <Tooltip />
-          {/* Single line, so legend not needed */}
-          {weightGoal && (
-            <ReferenceLine
-              y={weightGoal}
-              stroke="#ef4444"
-              strokeDasharray="3 3"
-              label={{ value: `Goal: ${weightGoal}`, position: "right", offset: 5 }}
-            />
-          )}
-          {weightData.length > 0 && getEventLines(weightData)}
-          {/* Show line connecting points with visible colored dots */}
-          <Line
-            type="monotone"
-            dataKey="weight"
-            stroke="#10b981"
-            strokeWidth={3}
-            dot={{ r: 3, fill: "#10b981" }}
-            name="Weight"
-          />
-        </LineChart>
-      </ResponsiveContainer>
+          </LineChart>
+        </ResponsiveContainer>
+      </div>
     );
+  };
+
+  // Helper function to calculate Glucose summary metrics
+  const calculateGlucoseMetrics = () => {
+    if (glucoseData.length === 0) return null;
+    
+    const last14Days = glucoseData.slice(0, 14); // Most recent 14 days
+    const last3Days = glucoseData.slice(0, 3);
+    
+    // Count measurements in target range
+    const inRangeCount = last14Days.filter(point => {
+      return point.glucose >= goals.glucoseMin && point.glucose <= goals.glucoseMax;
+    }).length;
+    
+    const percentInRange = last14Days.length > 0 ? Math.round((inRangeCount / last14Days.length) * 100) : 0;
+    
+    // Calculate 3-day average
+    const avgGlucose = last3Days.length > 0 
+      ? Math.round(last3Days.reduce((sum, p) => sum + p.glucose, 0) / last3Days.length)
+      : 0;
+    
+    return { percentInRange, avgGlucose };
   };
 
   const renderGlucoseChart = () => {
@@ -770,117 +899,84 @@ const CardiologyMVP = () => {
         </div>
       );
     }
-    // Use glucose goal from database (Goal table)
-    const glucoseGoal = goals.glucoseGoal;
+    
+    const metrics = calculateGlucoseMetrics();
     
     // Calculate dynamic Y-axis domain with 10 mg/dL tick increments
     const glucoseValues = glucoseData.map(d => d.glucose).filter((g): g is number => typeof g === 'number' && !isNaN(g));
-    const allGlucose = glucoseGoal ? [...glucoseValues, glucoseGoal] : glucoseValues;
-    const minGlucose = allGlucose.length > 0 ? Math.min(...allGlucose) : 80;
-    const maxGlucose = allGlucose.length > 0 ? Math.max(...allGlucose) : 200;
+    const minGlucose = glucoseValues.length > 0 ? Math.min(...glucoseValues) : 80;
+    const maxGlucose = glucoseValues.length > 0 ? Math.max(...glucoseValues) : 200;
     const padding = 20; // 20 mg/dL padding on each side
     const yMin = Math.max(0, Math.floor((minGlucose - padding) / 10) * 10); // Round down to nearest 10
     const yMax = Math.ceil((maxGlucose + padding) / 10) * 10; // Round up to nearest 10
     
+    // Ensure range is included
+    const finalYMin = Math.min(yMin, Math.floor((goals.glucoseMin - padding) / 10) * 10);
+    const finalYMax = Math.max(yMax, Math.ceil((goals.glucoseMax + padding) / 10) * 10);
+    
     // Generate ticks every 10 mg/dL
     const ticks: number[] = [];
-    for (let i = yMin; i <= yMax; i += 10) {
+    for (let i = finalYMin; i <= finalYMax; i += 10) {
       ticks.push(i);
     }
     
     return (
-      <ResponsiveContainer width="100%" height={320} style={{ outline: 'none' }}>
-        <LineChart
-          data={glucoseData}
-          margin={{ top: 20, right: 80, left: 60, bottom: 30 }}
-          style={{ outline: 'none' }}
-        >
-          <CartesianGrid strokeDasharray="3 3" />
-          <XAxis dataKey="readable">
-            <Label value="Date" position="bottom" offset={10} />
-          </XAxis>
-          <YAxis domain={[yMin, yMax]} ticks={ticks} width={60}>
-            <Label
-              value="Glucose (mg/dL)"
-              angle={-90}
-              position="insideLeft"
-              style={{ textAnchor: "middle" }}
-            />
-          </YAxis>
-          <Tooltip />
-          <ReferenceLine
-            y={glucoseGoal}
-            stroke="#ef4444"
-            strokeDasharray="3 3"
-            label={{ value: `Goal: ${glucoseGoal}`, position: "right", offset: 5 }}
-          />
-          {getEventLines(glucoseData)}
-          {/* Show line connecting points with visible colored dots */}
-          <Line
-            type="monotone"
-            dataKey="glucose"
-            stroke="#a855f7"
-            strokeWidth={3}
-            dot={{ r: 2, fill: "#a855f7" }}
-            name="Glucose"
-          />
-        </LineChart>
-      </ResponsiveContainer>
-    );
-  };
-
-  const renderCurrentMetricsVsGoals = () => {
-    const metrics = [
-      { key: "systolic", label: "Systolic Blood Pressure", current: currentMetrics.systolic, goal: goals.systolic, goalValue: goals.systolicGoal },
-      { key: "diastolic", label: "Diastolic Blood Pressure", current: currentMetrics.diastolic, goal: goals.diastolic, goalValue: goals.diastolicGoal },
-      { key: "weight", label: "Weight", current: currentMetrics.weight, goal: goals.weight, goalValue: goals.weightGoal },
-      { key: "glucose", label: "Glucose", current: currentMetrics.glucose, goal: goals.glucose, goalValue: goals.glucoseGoal },
-    ];
-
-    return (
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        {metrics.map((metric) => {
-          let isAtGoal = false;
-          const current = metric.current;
-          const goalValue = metric.goalValue;
-
-          if (current !== "N/A" && goalValue !== null && goalValue !== undefined) {
-            if (metric.key === "systolic" || metric.key === "diastolic" || metric.key === "glucose") {
-              const numVal = parseInt(current, 10);
-              if (metric.key === "systolic" || metric.key === "glucose") {
-                isAtGoal = numVal < goalValue;
-              } else if (metric.key === "diastolic") {
-                isAtGoal = numVal < goalValue;
-              }
-            } else if (metric.key === "weight") {
-              const weightVal = parseFloat(current);
-              isAtGoal = weightVal <= goalValue;
-            }
-          }
-
-          return (
-            <div
-              key={metric.key}
-              className={`p-4 rounded-lg ${current === "N/A" ? "bg-gray-50" : isAtGoal ? "bg-green-50" : "bg-yellow-50"}`}
-            >
-              <p className="text-sm text-gray-600 mb-1">{metric.label}</p>
-              <p className="text-2xl font-bold text-gray-800">{current}</p>
-              <p className="text-sm mt-1">
-                <span className="text-gray-600">Goal: </span>
-                <span className="font-medium">{metric.goal}</span>
-              </p>
-              {current !== "N/A" && goalValue !== null && goalValue !== undefined && (
-                <div className="mt-2">
-                  {isAtGoal ? (
-                    <span className="text-green-600 text-sm font-medium">✓ At Goal</span>
-                  ) : (
-                    <span className="text-orange-600 text-sm font-medium">⚠ Above Goal</span>
-                  )}
-                </div>
-              )}
+      <div>
+        {/* Summary Metrics */}
+        {metrics && (
+          <div className="mb-4 grid grid-cols-2 gap-4">
+            <div className="bg-purple-50 rounded-lg p-3 border border-purple-200">
+              <p className="text-xs text-gray-600 mb-1">% in Target Range (14d)</p>
+              <p className="text-lg font-bold text-purple-700">{metrics.percentInRange}%</p>
             </div>
-          );
-        })}
+            <div className="bg-purple-50 rounded-lg p-3 border border-purple-200">
+              <p className="text-xs text-gray-600 mb-1">3-Day Average</p>
+              <p className="text-lg font-bold text-purple-700">{metrics.avgGlucose} mg/dL</p>
+            </div>
+          </div>
+        )}
+        
+        <ResponsiveContainer width="100%" height={320} style={{ outline: 'none' }}>
+          <LineChart
+            data={glucoseData}
+            margin={{ top: 20, right: 80, left: 60, bottom: 30 }}
+            style={{ outline: 'none' }}
+          >
+            <CartesianGrid strokeDasharray="3 3" />
+            <XAxis dataKey="readable">
+              <Label value="Date" position="bottom" offset={10} />
+            </XAxis>
+            <YAxis domain={[finalYMin, finalYMax]} ticks={ticks} width={60}>
+              <Label
+                value="Glucose (mg/dL)"
+                angle={-90}
+                position="insideLeft"
+                style={{ textAnchor: "middle" }}
+              />
+            </YAxis>
+            <Tooltip />
+            
+            {/* Target range band - green shaded area */}
+            <ReferenceArea
+              y1={goals.glucoseMin}
+              y2={goals.glucoseMax}
+              fill="#86efac"
+              fillOpacity={0.3}
+              stroke="none"
+            />
+            
+            {getEventLines(glucoseData)}
+            {/* Show line connecting points with visible colored dots */}
+            <Line
+              type="monotone"
+              dataKey="glucose"
+              stroke="#a855f7"
+              strokeWidth={3}
+              dot={{ r: 2, fill: "#a855f7" }}
+              name="Glucose"
+            />
+          </LineChart>
+        </ResponsiveContainer>
       </div>
     );
   };
@@ -889,7 +985,7 @@ const CardiologyMVP = () => {
   const handleSubmitMeasurements = async () => {
     // Validate that at least one measurement is provided
     const hasBP = measurements.bloodPressure.some(bp => bp.systolic && bp.diastolic);
-    const hasGlucose = measurements.glucose.some(g => g);
+    const hasGlucose = measurements.glucose && measurements.glucose.trim() !== "";
 
     if (!hasBP && !hasGlucose) {
       alert("Please enter at least one measurement");
@@ -929,7 +1025,7 @@ const CardiologyMVP = () => {
             { systolic: "", diastolic: "" },
             { systolic: "", diastolic: "" },
           ],
-          glucose: ["", "", ""],
+          glucose: "",
           weight: "",
           dateTime: new Date().toISOString().slice(0, 16),
         });
@@ -1027,7 +1123,6 @@ const CardiologyMVP = () => {
                 <div>
                   <p className="text-sm text-gray-600">Primary Physician</p>
                   <p className="text-lg font-semibold">{patientProfile.physician.name}</p>
-                  <p className="text-sm text-gray-500">{patientProfile.physician.email}</p>
                 </div>
               )}
               {patientProfile.sex && (
@@ -1152,7 +1247,7 @@ const CardiologyMVP = () => {
                 </p>
                 {[0, 1, 2].map((index) => (
                   <div key={index} className="mb-4 pb-4 border-b border-gray-200 last:border-b-0">
-                    <p className="text-sm font-medium text-gray-700 mb-2">Measurement {index + 1}</p>
+                    <p className="text-base font-medium text-gray-700 mb-2">Measurement {index + 1}</p>
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                       <div>
                         <label className="block text-sm text-gray-600 mb-2">
@@ -1169,7 +1264,7 @@ const CardiologyMVP = () => {
                           }}
                           className="w-full px-4 py-3 text-lg border-2 border-gray-300 rounded-lg focus:border-blue-500 focus:outline-none"
                         />
-                        <p className="text-xs text-gray-500 mt-1">mmHg</p>
+                        <p className="text-sm text-gray-500 mt-1">mmHg</p>
                       </div>
                       <div>
                         <label className="block text-sm text-gray-600 mb-2">
@@ -1186,7 +1281,7 @@ const CardiologyMVP = () => {
                           }}
                           className="w-full px-4 py-3 text-lg border-2 border-gray-300 rounded-lg focus:border-blue-500 focus:outline-none"
                         />
-                        <p className="text-xs text-gray-500 mt-1">mmHg</p>
+                        <p className="text-sm text-gray-500 mt-1">mmHg</p>
                       </div>
                     </div>
                   </div>
@@ -1203,7 +1298,7 @@ const CardiologyMVP = () => {
                   onChange={(e) => setMeasurements({ ...measurements, weight: e.target.value })}
                   className="w-full px-4 py-3 text-lg border-2 border-gray-300 rounded-lg focus:border-green-500 focus:outline-none"
                 />
-                <p className="text-xs text-gray-500 mt-1">pounds (lbs)</p>
+                <p className="text-sm text-gray-500 mt-1">pounds (lbs)</p>
               </div>
 
               {/* Glucose */}
@@ -1211,28 +1306,14 @@ const CardiologyMVP = () => {
                 <label className="block text-lg font-semibold text-gray-800 mb-3">
                   Blood Glucose
                 </label>
-                <p className="text-xs text-gray-600 mb-4">
-                  Take 3 measurements and enter all values.
-                </p>
-                {[0, 1, 2].map((index) => (
-                  <div key={index} className="mb-4">
-                    <label className="block text-sm text-gray-600 mb-2">
-                      Measurement {index + 1}
-                    </label>
-                    <input
-                      type="number"
-                      placeholder="110"
-                      value={measurements.glucose[index]}
-                      onChange={(e) => {
-                        const newGlucose = [...measurements.glucose];
-                        newGlucose[index] = e.target.value;
-                        setMeasurements({ ...measurements, glucose: newGlucose });
-                      }}
-                      className="w-full px-4 py-3 text-lg border-2 border-gray-300 rounded-lg focus:border-purple-500 focus:outline-none"
-                    />
-                    <p className="text-xs text-gray-500 mt-1">mg/dL (fasting)</p>
-                  </div>
-                ))}
+                <input
+                  type="number"
+                  placeholder="110"
+                  value={measurements.glucose}
+                  onChange={(e) => setMeasurements({ ...measurements, glucose: e.target.value })}
+                  className="w-full px-4 py-3 text-lg border-2 border-gray-300 rounded-lg focus:border-purple-500 focus:outline-none"
+                />
+                <p className="text-sm text-gray-500 mt-1">mg/dL (fasting)</p>
               </div>
 
 
@@ -1657,15 +1738,6 @@ const CardiologyMVP = () => {
             <div className="bg-gray-50 rounded-lg p-3 border">{renderBPChart()}</div>
           </div>
 
-          <div>
-            <h3 className="text-lg font-semibold text-gray-800 mb-2 flex items-center gap-2">
-              <Heart className="w-5 h-5 text-red-500" />
-              Current Metrics vs Goals
-            </h3>
-            <div className="bg-gray-50 rounded-lg p-3 border max-h-[360px] overflow-y-auto">
-              {renderCurrentMetricsVsGoals()}
-            </div>
-          </div>
         </div>
 
         {/* Patient Summary from Analysis */}

@@ -55,10 +55,18 @@ export async function POST(request: NextRequest) {
     const body = await request.json();
     const {
       patientId,
-      systolicGoal,
-      diastolicGoal,
-      weightGoal,
-      glucoseGoal,
+      // BP ranges
+      systolicMin,
+      systolicMax,
+      diastolicMin,
+      diastolicMax,
+      // Glucose range
+      glucoseMin,
+      glucoseMax,
+      // Weight baseline and thresholds
+      weightBaseline,
+      weightDailyAlertThreshold,
+      weightWeeklyAlertThreshold,
     } = body;
 
     if (!patientId) {
@@ -83,22 +91,32 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Upsert goals
+    // Upsert goals with range-based structure
     const goals = await prisma.goal.upsert({
       where: { userId: patientId },
       update: {
-        systolicGoal: systolicGoal !== undefined ? systolicGoal : null,
-        diastolicGoal: diastolicGoal !== undefined ? diastolicGoal : null,
-        weightGoal: weightGoal !== undefined ? weightGoal : null,
-        glucoseGoal: glucoseGoal !== undefined ? glucoseGoal : null,
+        systolicMin: systolicMin !== undefined ? systolicMin : null,
+        systolicMax: systolicMax !== undefined ? systolicMax : null,
+        diastolicMin: diastolicMin !== undefined ? diastolicMin : null,
+        diastolicMax: diastolicMax !== undefined ? diastolicMax : null,
+        glucoseMin: glucoseMin !== undefined ? glucoseMin : null,
+        glucoseMax: glucoseMax !== undefined ? glucoseMax : null,
+        weightBaseline: weightBaseline !== undefined ? weightBaseline : null,
+        weightDailyAlertThreshold: weightDailyAlertThreshold !== undefined ? weightDailyAlertThreshold : null,
+        weightWeeklyAlertThreshold: weightWeeklyAlertThreshold !== undefined ? weightWeeklyAlertThreshold : null,
         createdBy: session.user.id,
       },
       create: {
         userId: patientId,
-        systolicGoal: systolicGoal !== undefined ? systolicGoal : null,
-        diastolicGoal: diastolicGoal !== undefined ? diastolicGoal : null,
-        weightGoal: weightGoal !== undefined ? weightGoal : null,
-        glucoseGoal: glucoseGoal !== undefined ? glucoseGoal : null,
+        systolicMin: systolicMin !== undefined ? systolicMin : null,
+        systolicMax: systolicMax !== undefined ? systolicMax : null,
+        diastolicMin: diastolicMin !== undefined ? diastolicMin : null,
+        diastolicMax: diastolicMax !== undefined ? diastolicMax : null,
+        glucoseMin: glucoseMin !== undefined ? glucoseMin : null,
+        glucoseMax: glucoseMax !== undefined ? glucoseMax : null,
+        weightBaseline: weightBaseline !== undefined ? weightBaseline : null,
+        weightDailyAlertThreshold: weightDailyAlertThreshold !== undefined ? weightDailyAlertThreshold : null,
+        weightWeeklyAlertThreshold: weightWeeklyAlertThreshold !== undefined ? weightWeeklyAlertThreshold : null,
         createdBy: session.user.id,
       },
     });
