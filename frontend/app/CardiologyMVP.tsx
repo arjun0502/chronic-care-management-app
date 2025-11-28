@@ -544,12 +544,21 @@ const CardiologyMVP = () => {
   const getEventLines = (chartData: ChartDataPoint[]) => {
     if (chartData.length === 0) return [];
     
+    // Helper to get date string (YYYY-MM-DD) from any date input
+    const getDateString = (dateInput: string | number | Date): string => {
+      const d = new Date(dateInput);
+      return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    };
+    
+    // Get date range from chart data (oldest to newest)
+    const firstDate = getDateString(chartData[0].timestamp);
+    const lastDate = getDateString(chartData[chartData.length - 1].timestamp);
+    
     return events
       .filter((event) => {
-        const eventDate = new Date(event.date).getTime();
-        const firstDataPoint = chartData[0].timestamp;
-        const lastDataPoint = chartData[chartData.length - 1].timestamp;
-        return eventDate >= firstDataPoint && eventDate <= lastDataPoint;
+        const eventDate = getDateString(event.date);
+        // Simple string comparison: "2025-11-28" >= "2025-11-27" works correctly
+        return eventDate >= firstDate && eventDate <= lastDate;
       })
       .map((event) => {
         const eventDate = new Date(event.date);
