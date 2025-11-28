@@ -455,6 +455,21 @@ const CardiologyMVP = () => {
       };
     });
 
+  // Glucose chart data
+  const glucoseData = historicalMeasurements
+    .filter(m => m.glucose !== null)
+    .slice(0, 20)
+    .reverse()
+    .map((m) => {
+      const date = new Date(m.date);
+      return {
+        date: `${date.getMonth() + 1}/${date.getDate()}`,
+        glucose: m.glucose as number,
+        readable: date.toLocaleDateString("en-US", { month: "short", day: "numeric" }),
+        timestamp: date.getTime(),
+      };
+    });
+
   // Physician dashboard patients
   const physicianPatients: {
     id: string;
@@ -608,7 +623,7 @@ const CardiologyMVP = () => {
             dataKey="systolic"
             stroke="#3b82f6"
             strokeWidth={3}
-            dot={{ r: 5, fill: "#3b82f6" }}
+            dot={{ r: 3, fill: "#3b82f6" }}
             name="Systolic BP"
           />
           <Line
@@ -616,7 +631,7 @@ const CardiologyMVP = () => {
             dataKey="diastolic"
             stroke="#22c55e"
             strokeWidth={3}
-            dot={{ r: 5, fill: "#22c55e" }}
+            dot={{ r: 3, fill: "#22c55e" }}
             name="Diastolic BP"
           />
         </LineChart>
@@ -670,8 +685,59 @@ const CardiologyMVP = () => {
             dataKey="weight"
             stroke="#10b981"
             strokeWidth={3}
-            dot={{ r: 5, fill: "#10b981" }}
+            dot={{ r: 3, fill: "#10b981" }}
             name="Weight"
+          />
+        </LineChart>
+      </ResponsiveContainer>
+    );
+  };
+
+  const renderGlucoseChart = () => {
+    if (glucoseData.length === 0) {
+      return (
+        <div className="flex items-center justify-center h-80 bg-gray-50 rounded-lg">
+          <p className="text-gray-500">No glucose data available yet. Record your first measurement to see trends here.</p>
+        </div>
+      );
+    }
+    // Use glucose goal from database (Goal table)
+    const glucoseGoal = goals.glucoseGoal;
+    
+    return (
+      <ResponsiveContainer width="100%" height={320}>
+        <LineChart
+          data={glucoseData}
+          margin={{ top: 20, right: 80, left: 60, bottom: 30 }}
+        >
+          <CartesianGrid strokeDasharray="3 3" />
+          <XAxis dataKey="readable">
+            <Label value="Date" position="bottom" offset={10} />
+          </XAxis>
+          <YAxis width={60}>
+            <Label
+              value="Glucose (mg/dL)"
+              angle={-90}
+              position="insideLeft"
+              style={{ textAnchor: "middle" }}
+            />
+          </YAxis>
+          <Tooltip />
+          <ReferenceLine
+            y={glucoseGoal}
+            stroke="#ef4444"
+            strokeDasharray="3 3"
+            label={{ value: `Goal: ${glucoseGoal}`, position: "right", offset: 5 }}
+          />
+          {getEventLines(glucoseData)}
+          {/* Show line connecting points with visible colored dots */}
+          <Line
+            type="monotone"
+            dataKey="glucose"
+            stroke="#a855f7"
+            strokeWidth={3}
+            dot={{ r: 2, fill: "#a855f7" }}
+            name="Glucose"
           />
         </LineChart>
       </ResponsiveContainer>
@@ -1237,6 +1303,12 @@ const CardiologyMVP = () => {
           <div className="bg-white rounded-lg shadow-md p-6">
             <h2 className="text-2xl font-bold text-gray-800 mb-6">Weight Timeline</h2>
             <div className="mb-4">{renderWeightChart()}</div>
+          </div>
+
+          {/* Glucose Chart */}
+          <div className="bg-white rounded-lg shadow-md p-6">
+            <h2 className="text-2xl font-bold text-gray-800 mb-6">Glucose Timeline</h2>
+            <div className="mb-4">{renderGlucoseChart()}</div>
           </div>
 
           {/* Events List */}

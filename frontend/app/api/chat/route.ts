@@ -3,12 +3,15 @@ import { auth } from "@/app/api/auth/[...nextauth]/route";
 import { prisma } from "@/lib/prisma";
 import OpenAI from "openai";
 
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
-});
+// Initialize OpenAI client
+const openai = process.env.OPENAI_API_KEY
+  ? new OpenAI({
+      apiKey: process.env.OPENAI_API_KEY,
+    })
+  : null;
 
-// JSON Schema for OpenAI structured outputs
-const llmResponseSchema = {
+// JSON Schema for structured output
+const responseSchema = {
   type: "object",
   properties: {
     message: {
@@ -17,8 +20,7 @@ const llmResponseSchema = {
     },
     events: {
       type: "array",
-      description: "Array of extracted events from the conversation",
-      default: [],
+      description: "Array of significant events extracted from the patient's message",
       items: {
         type: "object",
         properties: {
@@ -38,23 +40,30 @@ const llmResponseSchema = {
           },
           date: {
             type: "string",
-            description: "ISO date string in YYYY-MM-DD format (e.g., '2024-11-25') or 'today' for today's date. Must be parseable for chart plotting.",
+            description: "ISO date string in YYYY-MM-DD format or 'today' for today's date",
           },
           description: {
             type: "string",
-            description: "Brief description of the event",
+            description: "Brief description of the event (can be empty string if not needed)",
           },
         },
-        required: ["title", "type", "severity", "date"],
+        required: ["title", "type", "severity", "date", "description"],
+        additionalProperties: false,
       },
     },
+    conversationEnding: {
+      type: "boolean",
+      description: "True if the patient is indicating the conversation is ending. Look for: 'nope', 'no', 'nothing else', 'that's all', 'I'm good', 'all set', 'no thanks', 'I'm done', 'done', 'finished', goodbye phrases, or when they decline further questions in response to 'anything else?' type questions.",
+    },
   },
-  required: ["message", "events"],
+  required: ["message", "events", "conversationEnding"],
   additionalProperties: false,
 };
 
+// POST: Handle chat messages
 export async function POST(request: NextRequest) {
   try {
+    // Authentication
     const session = await auth();
     if (!session?.user?.id || session.user.role !== "patient") {
       return NextResponse.json(
@@ -67,12 +76,7 @@ export async function POST(request: NextRequest) {
     const body = await request.json();
     const { message, chatId } = body;
 
-    console.log("=== CHAT API POST CALLED ===");
-    console.log("Timestamp:", new Date().toISOString());
-    console.log("UserId:", userId);
-    console.log("Message:", message);
-    console.log("ChatId:", chatId);
-
+    // Validation
     if (!message || !message.trim()) {
       return NextResponse.json(
         { success: false, error: "Message is required" },
@@ -81,17 +85,29 @@ export async function POST(request: NextRequest) {
     }
 
     // Get or create chat
-    let chat = chatId 
-      ? await prisma.chat.findUnique({ 
+    let chat = chatId
+      ? await prisma.chat.findUnique({
           where: { id: chatId },
-          include: { messages: { orderBy: { createdAt: "asc" } } }
         })
       : null;
+
+    // Check if previous conversation ended (time-based detection for abandoned chats)
+    // Do this BEFORE creating new chat or updating timestamp
+    const CONVERSATION_TIMEOUT = 30 * 60 * 1000; // 30 minutes
+    let previousConversationEnded = false;
     
+    if (chat && chat.updatedAt) {
+      const timeSinceLastUpdate = Date.now() - new Date(chat.updatedAt).getTime();
+      previousConversationEnded = timeSinceLastUpdate > CONVERSATION_TIMEOUT;
+      
+      if (previousConversationEnded) {
+        console.log("Previous conversation timed out - will generate analysis after processing this message");
+      }
+    }
+
     if (!chat) {
       chat = await prisma.chat.create({
         data: { userId },
-        include: { messages: true },
       });
     }
 
@@ -114,114 +130,123 @@ export async function POST(request: NextRequest) {
     });
 
     // Get conversation history
-    const messages = await prisma.message.findMany({
+    const conversationHistory = await prisma.message.findMany({
       where: { chatId: chat.id },
       orderBy: { createdAt: "asc" },
     });
 
-    // Build system prompt for structured output
-    // Note: With structured outputs, OpenAI enforces the schema, so we can focus on behavior
-    const systemPrompt = `You are a helpful and empathetic healthcare assistant for a cardiac care patient. 
-
-You will respond with a JSON object containing:
-- "message": Your natural, empathetic conversational response to the patient
-- "events": An array of significant events extracted from what the PATIENT said
-
-Rules for events:
-- If no events mentioned in this conversation turn, return empty events array: {"message": "...", "events": []}
-- Only extract significant events (symptoms, medication changes, new supplements, adherence issues, lifestyle changes)
-- Be conversational and empathetic in your message
-- Severity: "high" for concerning symptoms (chest pain, shortness of breath, severe BP issues), "medium" for notable changes, "low" for minor updates
-- Extract events from what the PATIENT said, not from your responses
-- For dates: Use ISO format (YYYY-MM-DD) like "2024-11-25", or "today" for today's date
+    // Prepare messages for OpenAI
+    const openaiMessages: Array<{ role: "system" | "user" | "assistant"; content: string }> = [
+      {
+        role: "system",
+        content: `You are a helpful and empathetic healthcare assistant for a cardiac care patient.
 
 Your role:
-1. Listen to symptoms and ask thoughtful follow-up questions
-2. Collect information about Life's Essential 8 lifestyle factors (diet, exercise, sleep, smoking)
-3. Ask about medication adherence and new medications/supplements
-4. Be conversational, warm, and ask one question at a time
+- Listen to symptoms and ask thoughtful follow-up questions
+- Collect information about lifestyle factors (diet, exercise, sleep, smoking)
+- Ask about medication adherence and new medications/supplements
+- Be conversational, warm, and ask one question at a time
 
 Patient Context:
 - Name: ${patient?.name || "Patient"}
 - Conditions: ${patient?.conditions?.join(", ") || "Not specified"}
-- Current Medications: ${patient?.medications?.map(m => `${m.name} (${m.dosage}, ${m.frequency})`).join(", ") || "None"}
-- Goals: BP ${patient?.goals?.systolicGoal || 130}/${patient?.goals?.diastolicGoal || 80} mmHg`;
+- Current Medications: ${patient?.medications?.map((m: { name: string; dosage: string; frequency: string }) => `${m.name} (${m.dosage}, ${m.frequency})`).join(", ") || "None"}
+- Goals: BP ${patient?.goals?.systolicGoal || 130}/${patient?.goals?.diastolicGoal || 80} mmHg
 
-    // Prepare messages for OpenAI (extract just the message text from previous structured responses)
-    const conversationMessages = messages.map(m => {
-      if (m.role === "assistant" && m.content.startsWith("{")) {
+You will respond with a JSON object containing:
+- "message": Your natural, empathetic conversational response
+- "events": An array of significant events extracted from what the PATIENT said
+- "conversationEnding": Boolean indicating if the conversation is ending
+
+Rules for events:
+- Only extract significant events (symptoms, medication changes, lifestyle changes, supplements, adherence issues)
+- If no events mentioned, return empty array: {"message": "...", "events": []}
+- Severity: "high" for concerning symptoms (chest pain, shortness of breath, severe BP issues), "medium" for notable changes, "low" for minor updates
+- Extract events from what the PATIENT said, not from your responses
+- For dates: Use ISO format (YYYY-MM-DD) like "2024-11-25", or "today" for today's date
+
+Rules for conversationEnding:
+- Set "conversationEnding": true if the patient indicates the conversation is ending, such as:
+  * Responding "nope", "no", "nothing else", "that's all", "I'm good", "all set", "no thanks", "I'm done", "done", "finished" to "anything else?" type questions
+  * Saying goodbye, thanks, "talk to you later", "see you", etc.
+  * Declining further questions or indicating they're done sharing
+- Set "conversationEnding": false if they're continuing the conversation or asking questions
+- Be conservative - only set to true when you're confident the conversation is ending`,
+      },
+    ];
+
+    // Add conversation history (extract message text from previous structured responses)
+    for (const msg of conversationHistory) {
+      if (msg.role === "assistant" && msg.content.startsWith("{")) {
         try {
-          const parsed = JSON.parse(m.content);
-          return {
-            role: "assistant" as const,
-            content: parsed.message || m.content,
-          };
+          const parsed = JSON.parse(msg.content);
+          openaiMessages.push({
+            role: "assistant",
+            content: parsed.message || msg.content,
+          });
         } catch {
-          return {
-            role: "assistant" as const,
-            content: m.content,
-          };
+          openaiMessages.push({
+            role: "assistant",
+            content: msg.content,
+          });
         }
+      } else {
+        openaiMessages.push({
+          role: msg.role === "user" ? "user" : "assistant",
+          content: msg.content,
+        });
       }
-      return {
-        role: (m.role === "user" ? "user" : "assistant") as const,
-        content: m.content,
-      };
-    });
+    }
 
-    // Call OpenAI with structured output using JSON Schema
-    let assistantMessage: string;
-    let extractedEvents: any[] = [];
+    // Call OpenAI
+    let assistantMessage = "I'm having trouble processing your message right now. Please try again in a moment.";
+    let extractedEvents: Array<{
+      title: string;
+      type: string;
+      severity: string;
+      date: string;
+      description?: string;
+    }> = [];
+    let conversationEnding = false;
 
-    try {
-      // Use structured outputs with JSON Schema for guaranteed schema compliance
-      // Note: gpt-4o-mini supports structured outputs
-      const completion = await openai.beta.chat.completions.create({
-        model: "gpt-4o-mini",
-        messages: [
-          { role: "system", content: systemPrompt },
-          ...conversationMessages,
-        ],
-        temperature: 0.7,
-        response_format: {
-          type: "json_schema",
-          json_schema: {
-            name: "llm_response",
-            schema: llmResponseSchema,
-            strict: true, // Enforces exact schema match - OpenAI will reject if it can't match
+    if (!openai) {
+      console.error("OpenAI API key not configured");
+      assistantMessage = "I'm sorry, but the AI service is not configured. Please contact your administrator.";
+    } else {
+      try {
+        const completion = await openai.chat.completions.create({
+          model: "gpt-4o-mini",
+          messages: openaiMessages,
+          temperature: 0.7,
+          response_format: {
+            type: "json_schema",
+            json_schema: {
+              name: "chat_response",
+              schema: responseSchema,
+              strict: true,
+            },
           },
-        },
-        max_tokens: 500,
-      });
+          max_tokens: 500,
+        });
 
-      const rawResponse = completion.choices[0].message.content;
-      if (!rawResponse) {
-        throw new Error("Empty response from OpenAI");
+        const content = completion.choices[0]?.message?.content;
+        if (!content) {
+          throw new Error("Empty response from OpenAI");
+        }
+
+        const parsed = JSON.parse(content);
+        assistantMessage = parsed.message || assistantMessage;
+        extractedEvents = parsed.events || [];
+        conversationEnding = parsed.conversationEnding || false;
+
+        console.log("OpenAI response:", { 
+          message: assistantMessage, 
+          eventsCount: extractedEvents.length,
+          conversationEnding 
+        });
+      } catch (error) {
+        console.error("OpenAI API error:", error);
       }
-
-      // Parse response - OpenAI structured outputs guarantee schema compliance
-      const parsedResponse = JSON.parse(rawResponse);
-      
-      assistantMessage = parsedResponse.message;
-      extractedEvents = parsedResponse.events || [];
-
-      // Log LLM output for debugging
-      console.log("=== LLM RESPONSE ===");
-      console.log("Full JSON response:", JSON.stringify(parsedResponse, null, 2));
-      console.log("Number of events extracted:", extractedEvents.length);
-      console.log("Events details:", extractedEvents.map(e => ({
-        title: e.title,
-        type: e.type,
-        severity: e.severity,
-        date: e.date,
-        description: e.description
-      })));
-      console.log("===================");
-    } catch (error) {
-      console.error("=== OPENAI API ERROR ===");
-      console.error("OpenAI API error:", error);
-      assistantMessage = "I'm having trouble processing your message right now. Please try again in a moment.";
-      extractedEvents = [];
     }
 
     // Save assistant response
@@ -234,41 +259,19 @@ Patient Context:
     });
 
     // Save extracted events
-    console.log("=== SAVING EVENTS ===");
-    console.log("Number of events to save:", extractedEvents.length);
-    console.log("Events array:", JSON.stringify(extractedEvents, null, 2));
-    
-    let eventsCreated = 0;
     for (const event of extractedEvents) {
-      console.log(`Creating event ${eventsCreated + 1}/${extractedEvents.length}:`, event.title);
-      console.log(`Raw date from LLM: "${event.date}"`);
-      
-      // Parse date - handle various formats from LLM
       let eventDate: Date;
       if (event.date === "today" || !event.date) {
         eventDate = new Date();
-        console.log("Using today's date");
       } else {
-        // Try parsing the date string
-        const parsedDate = new Date(event.date);
-        if (isNaN(parsedDate.getTime())) {
-          // If parsing fails, use today's date
-          console.warn(`Failed to parse date "${event.date}", using today's date`);
-          eventDate = new Date();
-        } else {
-          eventDate = parsedDate;
-        }
+        const parsed = new Date(event.date);
+        eventDate = isNaN(parsed.getTime()) ? new Date() : parsed;
       }
-      
-      // Normalize to start of day (midnight) for consistent plotting
       eventDate.setHours(0, 0, 0, 0);
-      
-      console.log(`Parsed event date: ${eventDate.toISOString()}`);
-      console.log(`Event date timestamp: ${eventDate.getTime()}`);
-      
-      const createdEvent = await prisma.event.create({
+
+      await prisma.event.create({
         data: {
-          userId: userId,
+          userId,
           date: eventDate,
           title: event.title,
           description: event.description || null,
@@ -277,12 +280,7 @@ Patient Context:
           source: "chat",
         },
       });
-      eventsCreated++;
-      console.log(`Event created with ID: ${createdEvent.id}, Title: ${createdEvent.title}, Date: ${createdEvent.date.toISOString()}`);
     }
-    
-    console.log(`Total events created in this API call: ${eventsCreated}`);
-    console.log("=====================");
 
     // Update chat timestamp
     await prisma.chat.update({
@@ -290,11 +288,18 @@ Patient Context:
       data: { updatedAt: new Date() },
     });
 
-    // Trigger automatic analysis generation after chat message
-    // This will update patient summary and urgency based on new events
-    generatePatientAnalysis(userId).catch(error => {
-      console.error("Error generating analysis:", error);
-    });
+    // Trigger patient analysis only if:
+    // 1. AI detected conversation ending, OR
+    // 2. Previous conversation timed out (abandoned chat)
+    if (conversationEnding || previousConversationEnded) {
+      console.log("Conversation ending detected - generating analysis", {
+        aiDetected: conversationEnding,
+        timeoutDetected: previousConversationEnded,
+      });
+      generatePatientAnalysis(userId).catch((error) => {
+        console.error("Error generating patient analysis:", error);
+      });
+    }
 
     return NextResponse.json({
       success: true,
@@ -305,7 +310,7 @@ Patient Context:
       },
     });
   } catch (error) {
-    console.error("Chat error:", error);
+    console.error("Chat API error:", error);
     return NextResponse.json(
       { success: false, error: "Failed to process chat message" },
       { status: 500 }
@@ -346,23 +351,28 @@ export async function GET(request: NextRequest) {
       orderBy: { updatedAt: "desc" },
     });
 
-    return NextResponse.json({ 
-      success: true, 
+    return NextResponse.json({
+      success: true,
       data: chat ? chat.messages : [],
       chatId: chat?.id || null,
     });
   } catch (error) {
-    console.error("Error fetching chats:", error);
+    console.error("Error fetching chat:", error);
     return NextResponse.json(
-      { success: false, error: "Failed to fetch chats" },
+      { success: false, error: "Failed to fetch chat" },
       { status: 500 }
     );
   }
 }
 
-// Helper function to generate patient analysis (called automatically after chat)
+// Helper function to generate patient analysis
 async function generatePatientAnalysis(userId: string) {
   try {
+    if (!openai) {
+      console.error("OpenAI API key not configured - skipping analysis");
+      return;
+    }
+
     const patient = await prisma.user.findUnique({
       where: { id: userId },
       include: {
@@ -385,57 +395,47 @@ async function generatePatientAnalysis(userId: string) {
 
     if (!patient) return;
 
-    const latestMeasurement = patient.measurements[0];
-    const measurementsData = patient.measurements.map(m => ({
-      date: m.date.toISOString().split('T')[0],
-      systolic: m.systolic,
-      diastolic: m.diastolic,
-      weight: m.weight,
-      glucose: m.glucose,
-    }));
-
-    const eventsData = patient.events.map(e => ({
-      date: e.date.toISOString().split('T')[0],
-      title: e.title,
-      type: e.type,
-      severity: e.severity,
-      description: e.description,
-    }));
-
-    const analysisPrompt = `You are a medical assistant helping a physician assess a patient's status. Analyze the following data and provide:
-
-1. A clinical summary (2-3 paragraphs)
-2. Urgency assessment (urgent/monitor/stable)
-3. Key reasons for the urgency level
+    const prompt = `You are a medical assistant helping a physician assess a patient's status.
 
 Patient: ${patient.name}
 Age: ${patient.dob ? new Date().getFullYear() - new Date(patient.dob).getFullYear() : "Unknown"}
 Conditions: ${patient.conditions.join(", ") || "None specified"}
-Medications: ${patient.medications.map(m => `${m.name} (${m.dosage}, ${m.frequency})`).join(", ") || "None"}
+Medications: ${patient.medications.map((m: { name: string; dosage: string; frequency: string }) => `${m.name} (${m.dosage}, ${m.frequency})`).join(", ") || "None"}
 
 Goals:
 - BP: ${patient.goals?.systolicGoal || 130}/${patient.goals?.diastolicGoal || 80} mmHg
 - Weight: ${patient.goals?.weightGoal || "Not set"} lbs
 - Glucose: ${patient.goals?.glucoseGoal || 130} mg/dL
 
-Latest Measurement:
-${latestMeasurement ? JSON.stringify({
-  date: latestMeasurement.date.toISOString().split('T')[0],
-  systolic: latestMeasurement.systolic,
-  diastolic: latestMeasurement.diastolic,
-  weight: latestMeasurement.weight,
-  glucose: latestMeasurement.glucose,
-}, null, 2) : "No measurements available"}
-
 Recent Measurements (last 10):
-${JSON.stringify(measurementsData, null, 2)}
+${JSON.stringify(
+      patient.measurements.map((m: { date: Date; systolic: number | null; diastolic: number | null; weight: number | null; glucose: number | null }) => ({
+        date: m.date.toISOString().split("T")[0],
+        systolic: m.systolic,
+        diastolic: m.diastolic,
+        weight: m.weight,
+        glucose: m.glucose,
+      })),
+      null,
+      2
+    )}
 
 Recent Events (last 30 days):
-${JSON.stringify(eventsData, null, 2)}
+${JSON.stringify(
+      patient.events.map((e: { date: Date; title: string; type: string | null; severity: string | null; description: string | null }) => ({
+        date: e.date.toISOString().split("T")[0],
+        title: e.title,
+        type: e.type,
+        severity: e.severity,
+        description: e.description,
+      })),
+      null,
+      2
+    )}
 
 Respond in JSON format:
 {
-  "summary": "2-3 paragraph clinical summary covering: overall status, key concerns, recent changes, recommendations",
+  "summary": "2-3 paragraph clinical summary",
   "urgency": "urgent|monitor|stable",
   "urgencyScore": number between 0-10,
   "reasons": ["reason 1", "reason 2", ...],
@@ -443,11 +443,9 @@ Respond in JSON format:
 }
 
 Urgency Guidelines:
-- "urgent": Score 8-10. Critical symptoms (chest pain, severe BP elevation), high-severity events, significant deviations from goals
-- "monitor": Score 4-7. Notable concerns, moderate deviations, medium-severity events, trends to watch
-- "stable": Score 0-3. Generally stable, minor deviations, low-severity events
-
-Be clinically accurate and consider both measurements vs goals AND recent events.`;
+- "urgent": Score 8-10. Critical symptoms, high-severity events, significant deviations from goals
+- "monitor": Score 4-7. Notable concerns, moderate deviations, medium-severity events
+- "stable": Score 0-3. Generally stable, minor deviations, low-severity events`;
 
     const completion = await openai.chat.completions.create({
       model: "gpt-4o-mini",
@@ -458,7 +456,7 @@ Be clinically accurate and consider both measurements vs goals AND recent events
         },
         {
           role: "user",
-          content: analysisPrompt,
+          content: prompt,
         },
       ],
       temperature: 0.3,
@@ -466,11 +464,11 @@ Be clinically accurate and consider both measurements vs goals AND recent events
       max_tokens: 1000,
     });
 
-    const analysis = JSON.parse(completion.choices[0].message.content || '{}');
+    const content = completion.choices[0]?.message?.content || "{}";
+    const analysis = JSON.parse(content);
 
-    // Save or update analysis
     await prisma.patientAnalysis.upsert({
-      where: { userId: userId },
+      where: { userId },
       update: {
         summary: analysis.summary || "Unable to generate summary.",
         urgency: analysis.urgency || "stable",
@@ -479,7 +477,7 @@ Be clinically accurate and consider both measurements vs goals AND recent events
         keyConcerns: analysis.keyConcerns || [],
       },
       create: {
-        userId: userId,
+        userId,
         summary: analysis.summary || "Unable to generate summary.",
         urgency: analysis.urgency || "stable",
         urgencyScore: analysis.urgencyScore || 0,
@@ -491,4 +489,3 @@ Be clinically accurate and consider both measurements vs goals AND recent events
     console.error("Error generating patient analysis:", error);
   }
 }
-
