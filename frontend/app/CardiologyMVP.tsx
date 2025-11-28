@@ -90,6 +90,14 @@ const CardiologyMVP = () => {
     lifestyleChanges: string[];
     medicationChanges: string[];
   }>>([]);
+  const [selectedEvent, setSelectedEvent] = useState<{
+    id: string;
+    date: string;
+    title: string;
+    description: string | null;
+    lifestyleChanges: string[];
+    medicationChanges: string[];
+  } | null>(null);
   const [historicalMeasurements, setHistoricalMeasurements] = useState<Array<{
     id: string;
     userId: string;
@@ -577,7 +585,40 @@ const CardiologyMVP = () => {
             stroke="#f59e0b"
             strokeWidth={2}
             strokeDasharray="5 5"
-            label={{ value: event.title, position: "top", fill: "#f59e0b", fontSize: 12 }}
+            label={
+              <Label
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                content={(props: any) => {
+                  if (!props || !props.viewBox) return null;
+                  const viewBox = props.viewBox;
+                  const x = typeof viewBox.x === 'number' ? viewBox.x : 0;
+                  const y = typeof viewBox.y === 'number' ? viewBox.y : 0;
+                  return (
+                    <text
+                      x={x}
+                      y={y - 10}
+                      fill="#f59e0b"
+                      fontSize={16}
+                      fontWeight="600"
+                      textAnchor="middle"
+                      style={{ cursor: "pointer" }}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setSelectedEvent(event);
+                      }}
+                      onMouseEnter={(e) => {
+                        e.currentTarget.style.opacity = "0.8";
+                      }}
+                      onMouseLeave={(e) => {
+                        e.currentTarget.style.opacity = "1";
+                      }}
+                    >
+                      {event.title}
+                    </text>
+                  );
+                }}
+              />
+            }
           />
         );
       });
@@ -596,9 +637,9 @@ const CardiologyMVP = () => {
     const diaGoal = goals.diastolicGoal;
     
     return (
-      <ResponsiveContainer width="100%" height={320}>
+      <ResponsiveContainer width="100%" height={320} style={{ outline: 'none' }}>
         {/* Extra right margin so right-side goal labels are fully visible */}
-        <LineChart data={bpData} margin={{ top: 40, right: 80, left: 60, bottom: 30 }}>
+        <LineChart data={bpData} margin={{ top: 40, right: 80, left: 60, bottom: 30 }} style={{ outline: 'none' }}>
           <CartesianGrid strokeDasharray="3 3" />
           <XAxis dataKey="readable">
             {/* Place Date label just below the X-axis ticks, outside the chart area */}
@@ -660,17 +701,35 @@ const CardiologyMVP = () => {
     // Use weight goal from database (Goal table)
     const weightGoal = goals.weightGoal;
     
+    // Calculate dynamic Y-axis domain with 5-lb tick increments
+    const weightValues = weightData.length > 0 
+      ? weightData.map(d => d.weight).filter((w): w is number => typeof w === 'number' && !isNaN(w))
+      : profileWeight ? [profileWeight] : [];
+    const allWeights = weightGoal ? [...weightValues, weightGoal] : weightValues;
+    const minWeight = allWeights.length > 0 ? Math.min(...allWeights) : 150;
+    const maxWeight = allWeights.length > 0 ? Math.max(...allWeights) : 200;
+    const padding = 10; // 10 lbs padding on each side
+    const yMin = Math.max(0, Math.floor((minWeight - padding) / 5) * 5); // Round down to nearest 5
+    const yMax = Math.ceil((maxWeight + padding) / 5) * 5; // Round up to nearest 5
+    
+    // Generate ticks every 5 lbs
+    const ticks: number[] = [];
+    for (let i = yMin; i <= yMax; i += 5) {
+      ticks.push(i);
+    }
+    
     return (
-      <ResponsiveContainer width="100%" height={320}>
+      <ResponsiveContainer width="100%" height={320} style={{ outline: 'none' }}>
         <LineChart
           data={weightData.length > 0 ? weightData : [{ readable: "Profile", weight: profileWeight }]}
           margin={{ top: 20, right: 80, left: 60, bottom: 30 }}
+          style={{ outline: 'none' }}
         >
           <CartesianGrid strokeDasharray="3 3" />
           <XAxis dataKey="readable">
             <Label value="Date" position="bottom" offset={10} />
           </XAxis>
-          <YAxis width={60}>
+          <YAxis domain={[yMin, yMax]} ticks={ticks} width={60}>
             <Label
               value="Weight (lbs)"
               angle={-90}
@@ -714,17 +773,33 @@ const CardiologyMVP = () => {
     // Use glucose goal from database (Goal table)
     const glucoseGoal = goals.glucoseGoal;
     
+    // Calculate dynamic Y-axis domain with 10 mg/dL tick increments
+    const glucoseValues = glucoseData.map(d => d.glucose).filter((g): g is number => typeof g === 'number' && !isNaN(g));
+    const allGlucose = glucoseGoal ? [...glucoseValues, glucoseGoal] : glucoseValues;
+    const minGlucose = allGlucose.length > 0 ? Math.min(...allGlucose) : 80;
+    const maxGlucose = allGlucose.length > 0 ? Math.max(...allGlucose) : 200;
+    const padding = 20; // 20 mg/dL padding on each side
+    const yMin = Math.max(0, Math.floor((minGlucose - padding) / 10) * 10); // Round down to nearest 10
+    const yMax = Math.ceil((maxGlucose + padding) / 10) * 10; // Round up to nearest 10
+    
+    // Generate ticks every 10 mg/dL
+    const ticks: number[] = [];
+    for (let i = yMin; i <= yMax; i += 10) {
+      ticks.push(i);
+    }
+    
     return (
-      <ResponsiveContainer width="100%" height={320}>
+      <ResponsiveContainer width="100%" height={320} style={{ outline: 'none' }}>
         <LineChart
           data={glucoseData}
           margin={{ top: 20, right: 80, left: 60, bottom: 30 }}
+          style={{ outline: 'none' }}
         >
           <CartesianGrid strokeDasharray="3 3" />
           <XAxis dataKey="readable">
             <Label value="Date" position="bottom" offset={10} />
           </XAxis>
-          <YAxis width={60}>
+          <YAxis domain={[yMin, yMax]} ticks={ticks} width={60}>
             <Label
               value="Glucose (mg/dL)"
               angle={-90}
@@ -1321,38 +1396,81 @@ const CardiologyMVP = () => {
             <div className="mb-4">{renderGlucoseChart()}</div>
           </div>
 
-          {/* Events List */}
-          {events.length > 0 && (
-            <div className="bg-white rounded-lg shadow-md p-6">
-              <div className="flex items-center justify-between mb-3">
-                <h3 className="text-lg font-semibold text-gray-800">Recent Events</h3>
-                <p className="text-xs text-gray-500">
-                  Events are shown as vertical lines in the charts above
-                </p>
-              </div>
-              <div className="space-y-2">
-                {events.slice().reverse().map((event) => (
-                  <div key={event.id} className="flex items-center space-x-3 p-3 bg-orange-50 rounded-lg">
-                    <div className="bg-orange-200 p-2 rounded-full">
-                      <Pill className="w-4 h-4 text-orange-800" />
-                    </div>
-                    <div>
-                      <p className="font-medium text-gray-800">{event.title}</p>
-                      <p className="text-sm text-gray-600">{new Date(event.date).toLocaleDateString()}</p>
-                      {event.description && (
-                        <p className="text-xs text-gray-500 mt-1">{event.description}</p>
-                      )}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
+        </div>
+      )}
 
-          {/* Current Metrics vs Goals */}
-          <div className="bg-white rounded-lg shadow-md p-6">
-            <h3 className="text-xl font-bold text-gray-800 mb-4">Current Metrics vs Goals</h3>
-            {renderCurrentMetricsVsGoals()}
+      {/* Event Details Popup */}
+      {selectedEvent && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center"
+          onClick={() => setSelectedEvent(null)}
+        >
+          {/* Transparent backdrop - no dark overlay */}
+          <div className="absolute inset-0" />
+          {/* Popup positioned in center without dark background */}
+          <div
+            className="relative bg-white rounded-lg shadow-2xl max-w-2xl w-full mx-4 p-6 border-2 border-orange-200"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-2xl font-bold text-gray-800">Event Details</h3>
+              <button
+                onClick={() => setSelectedEvent(null)}
+                className="text-gray-500 hover:text-gray-700 text-2xl"
+              >
+                ×
+              </button>
+            </div>
+            
+            <div className="space-y-4">
+              <div>
+                <p className="text-sm font-semibold text-gray-600 mb-1">Title</p>
+                <p className="text-lg text-gray-800">{selectedEvent.title}</p>
+              </div>
+              
+              <div>
+                <p className="text-sm font-semibold text-gray-600 mb-1">Date</p>
+                <p className="text-gray-800">{new Date(selectedEvent.date).toLocaleDateString()}</p>
+              </div>
+              
+              {selectedEvent.description && (
+                <div>
+                  <p className="text-sm font-semibold text-gray-600 mb-1">Symptom Description</p>
+                  <p className="text-gray-800">{selectedEvent.description}</p>
+                </div>
+              )}
+              
+              {selectedEvent.lifestyleChanges.length > 0 && (
+                <div>
+                  <p className="text-sm font-semibold text-gray-600 mb-1">Lifestyle Changes</p>
+                  <ul className="list-disc list-inside text-gray-800 space-y-1">
+                    {selectedEvent.lifestyleChanges.map((change, idx) => (
+                      <li key={idx}>{change}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+              
+              {selectedEvent.medicationChanges.length > 0 && (
+                <div>
+                  <p className="text-sm font-semibold text-gray-600 mb-1">Medication Changes</p>
+                  <ul className="list-disc list-inside text-gray-800 space-y-1">
+                    {selectedEvent.medicationChanges.map((change, idx) => (
+                      <li key={idx}>{change}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+            </div>
+            
+            <div className="mt-6 flex justify-end">
+              <button
+                onClick={() => setSelectedEvent(null)}
+                className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+              >
+                Close
+              </button>
+            </div>
           </div>
         </div>
       )}
