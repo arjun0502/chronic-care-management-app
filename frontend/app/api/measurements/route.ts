@@ -48,7 +48,7 @@ export async function POST(request: NextRequest) {
     const measurement = await prisma.measurement.create({
       data: {
         userId,
-        date: new Date(dateTime),
+        date: dateTime ? new Date(dateTime) : new Date(),
         systolic: avgSystolic > 0 ? Math.round(avgSystolic * 10) / 10 : null,
         diastolic: avgDiastolic > 0 ? Math.round(avgDiastolic * 10) / 10 : null,
         bpRaw: bpRaw.length > 0 ? bpRaw : null,

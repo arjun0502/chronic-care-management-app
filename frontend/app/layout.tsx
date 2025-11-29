@@ -14,8 +14,8 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "CardioTrack - AI-Assisted Cardiac Care Monitoring",
-  description: "Chronic care management application for cardiac patients",
+  title: "ChronicTrack",
+  description: "AI-Assisted Chronic Care Management",
 };
 
 export default function RootLayout({

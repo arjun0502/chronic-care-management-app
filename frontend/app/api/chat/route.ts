@@ -3,6 +3,11 @@ import { auth } from "@/app/api/auth/[...nextauth]/route";
 import { prisma } from "@/lib/prisma";
 import OpenAI from "openai";
 import { Prisma } from "@prisma/client";
+import {
+  computeAllMetrics,
+  mapGoals,
+  mapMeasurements,
+} from "@/lib/metrics";
 
 // Initialize OpenAI client
 const openai = process.env.OPENAI_API_KEY
@@ -26,6 +31,21 @@ const responseSchema = {
   },
   required: ["message", "conversationEnding"],
   additionalProperties: false,
+};
+
+type GoalsForPrompt = {
+  systolicMin?: number | null;
+  systolicMax?: number | null;
+  diastolicMin?: number | null;
+  diastolicMax?: number | null;
+  glucoseMin?: number | null;
+  glucoseMax?: number | null;
+  weightBaseline?: number | null;
+  weightWeeklyAlertThreshold?: number | null;
+  systolicGoal?: number | null;
+  diastolicGoal?: number | null;
+  weightGoal?: number | null;
+  glucoseGoal?: number | null;
 };
 
 // POST: Handle chat messages
@@ -129,9 +149,44 @@ Your approach:
 
 Patient Context:
 - Name: ${patient?.name || "Patient"}
+- Age: ${
+  patient?.dob
+    ? new Date().getFullYear() - new Date(patient.dob).getFullYear()
+    : "Unknown"
+}
 - Conditions: ${patient?.conditions?.join(", ") || "Not specified"}
-- Current Medications: ${patient?.medications?.map((m: { name: string; dosage: string; frequency: string }) => `${m.name} (${m.dosage}, ${m.frequency})`).join(", ") || "None"}
-- Goals: BP ${patient?.goals?.systolicGoal || 130}/${patient?.goals?.diastolicGoal || 80} mmHg
+- Current Medications: ${
+  patient?.medications
+    ?.map(
+      (m: { name: string; dosage: string; frequency: string }) =>
+        `${m.name} (${m.dosage}, ${m.frequency})`
+    )
+    .join(", ") || "None"
+}
+- Goals (if set):
+  * BP range: ${
+    patient?.goals
+      ? `${(patient.goals as GoalsForPrompt).systolicMin ?? (patient.goals as GoalsForPrompt).systolicGoal ?? "?"}–${
+          (patient.goals as GoalsForPrompt).systolicMax ?? (patient.goals as GoalsForPrompt).systolicGoal ?? "?"
+        }/${(patient.goals as GoalsForPrompt).diastolicMin ?? (patient.goals as GoalsForPrompt).diastolicGoal ?? "?"}–${
+          (patient.goals as GoalsForPrompt).diastolicMax ?? (patient.goals as GoalsForPrompt).diastolicGoal ?? "?"
+        } mmHg`
+      : "Not fully specified"
+  }
+  * Glucose range: ${
+    patient?.goals
+      ? `${(patient.goals as GoalsForPrompt).glucoseMin ?? (patient.goals as GoalsForPrompt).glucoseGoal ?? "?"}–${
+          (patient.goals as GoalsForPrompt).glucoseMax ?? (patient.goals as GoalsForPrompt).glucoseGoal ?? "?"
+        } mg/dL`
+      : "Not specified"
+  }
+  * Weight baseline: ${
+    patient?.goals && (patient.goals as GoalsForPrompt).weightBaseline !== null
+      ? `${(patient.goals as GoalsForPrompt).weightBaseline} lbs (weekly alert if gain > ${
+          (patient.goals as GoalsForPrompt).weightWeeklyAlertThreshold ?? 5
+        } lbs)`
+      : "Not set"
+  }
 
 You will respond with a JSON object containing:
 - "message": Your natural, empathetic conversational response (focused on information gathering, NOT advice)
@@ -466,32 +521,89 @@ async function generatePatientAnalysis(userId: string) {
 
     if (!patient) return;
 
-    const prompt = `You are a medical assistant helping a physician assess a patient's status.
+    // Compute derived metrics from recent measurements and goals
+    const metrics =
+      patient.measurements.length > 0
+        ? computeAllMetrics(
+            mapMeasurements(
+              patient.measurements as unknown as Parameters<
+                typeof mapMeasurements
+              >[0]
+            ),
+            mapGoals(patient.goals ?? null)
+          )
+        : null;
 
-Patient: ${patient.name}
-Age: ${patient.dob ? new Date().getFullYear() - new Date(patient.dob).getFullYear() : "Unknown"}
-Conditions: ${patient.conditions.join(", ") || "None specified"}
-Medications: ${patient.medications.map((m: { name: string; dosage: string; frequency: string }) => `${m.name} (${m.dosage}, ${m.frequency})`).join(", ") || "None"}
+    const prompt = `You are a medical assistant helping a physician quickly assess a chronic cardiac patient's current status.
 
-Goals:
-- BP: ${patient.goals?.systolicGoal || 130}/${patient.goals?.diastolicGoal || 80} mmHg
-- Weight: ${patient.goals?.weightGoal || "Not set"} lbs
-- Glucose: ${patient.goals?.glucoseGoal || 130} mg/dL
+Patient context:
+- Name: ${patient.name}
+- Age: ${
+      patient.dob
+        ? new Date().getFullYear() - new Date(patient.dob).getFullYear()
+        : "Unknown"
+    }
+- Conditions: ${patient.conditions.join(", ") || "None specified"}
+- Medications: ${
+      patient.medications
+        .map(
+          (m: { name: string; dosage: string; frequency: string }) =>
+            `${m.name} (${m.dosage}, ${m.frequency})`
+        )
+        .join(", ") || "None"
+    }
 
-Recent Measurements (last 10):
+Goals / thresholds (if available):
 ${JSON.stringify(
-      patient.measurements.map((m: { date: Date; systolic: number | null; diastolic: number | null; weight: number | null; glucose: number | null }) => ({
-        date: m.date.toISOString().split("T")[0],
-        systolic: m.systolic,
-        diastolic: m.diastolic,
-        weight: m.weight,
-        glucose: m.glucose,
-      })),
+      (() => {
+        const goals = patient.goals as GoalsForPrompt | null;
+        if (!goals) return { bloodPressure: null, glucose: null, weight: null };
+        return {
+          bloodPressure: {
+            systolicMin: goals.systolicMin ?? goals.systolicGoal ?? null,
+            systolicMax: goals.systolicMax ?? goals.systolicGoal ?? null,
+            diastolicMin: goals.diastolicMin ?? goals.diastolicGoal ?? null,
+            diastolicMax: goals.diastolicMax ?? goals.diastolicGoal ?? null,
+          },
+          glucose: {
+            glucoseMin: goals.glucoseMin ?? goals.glucoseGoal ?? null,
+            glucoseMax: goals.glucoseMax ?? goals.glucoseGoal ?? null,
+          },
+          weight: {
+            baseline: goals.weightBaseline ?? goals.weightGoal ?? null,
+            weeklyAlertThreshold: goals.weightWeeklyAlertThreshold ?? null,
+          },
+        };
+      })(),
       null,
       2
     )}
 
-Recent Events (last 30 days):
+Derived metrics from recent trends (if available):
+${JSON.stringify(metrics, null, 2)}
+
+Recent measurements (last 10):
+${JSON.stringify(
+      patient.measurements.map(
+        (m: {
+          date: Date;
+          systolic: number | null;
+          diastolic: number | null;
+          weight: number | null;
+          glucose: number | null;
+        }) => ({
+          date: m.date.toISOString().split("T")[0],
+          systolic: m.systolic,
+          diastolic: m.diastolic,
+          weight: m.weight,
+          glucose: m.glucose,
+        })
+      ),
+      null,
+      2
+    )}
+
+Key events and symptoms (last 30 days):
 ${JSON.stringify(
       (patient.events as unknown as Array<{
         date: Date;
@@ -510,24 +622,26 @@ ${JSON.stringify(
       2
     )}
 
-Respond in JSON format (keep it concise and skimmable):
+Respond ONLY in JSON format (keep it concise and skimmable):
 {
-  "summary": "2-3 sentence clinical summary focused on the last few weeks",
   "urgency": "urgent|monitor|stable",
-  "urgencyScore": number between 0-10,
-  "reasons": ["short reasons explaining WHY you chose this urgency bucket (2-4 items max)"],
-  "keyConcerns": ["very short one-line concerns the physician should keep in mind over time (1-3 items max)"]
+  "urgencyScore": "number between 0-10 reflecting how concerning the overall picture is within that bucket",
+  "summary": "A 2–3 sentence clinician-style narrative describing overall trends in blood pressure, glucose, weight, and symptoms over the past few weeks (improving, worsening, or stable). Do not list lots of exact numbers; focus on direction and clinical meaning.",
+  "keyFindings": [
+    "2–4 short bullet-style reasons that justify the chosen urgency bucket, each highlighting a clinically meaningful trend, abnormality, symptom pattern, or important medication/lifestyle change."
+  ]
 }
 
 Additional instructions:
-- Do NOT repeat raw measurements or events; they are already available to the physician in the dashboard.
-- Focus on compression and triage: what story should the physician see at a glance, and why is the urgency bucket appropriate?
+- Do NOT repeat raw measurement lists or long sequences of numbers; the physician already has detailed data in the dashboard.
+- The summary should tell the high-level clinical story at a glance, not a lab report.
+- keyFindings should give the essential reasons behind the urgency choice (the 'why now?'), not every minor deviation.
 - Keep all text concise and easily skimmable.
 
 Urgency Guidelines:
-- "urgent": Score 8-10. Critical symptoms, high-severity events, significant deviations from goals
-- "monitor": Score 4-7. Notable concerns, moderate deviations, medium-severity events
-- "stable": Score 0-3. Generally stable, minor deviations, low-severity events`;
+- "urgent": Score 8-10. Critical symptoms, high-severity events, or significant sustained deviations from goals that likely warrant near-term outreach.
+- "monitor": Score 4-7. Notable concerns, moderate deviations, or emerging trends that need closer follow-up but are not immediately dangerous.
+- "stable": Score 0-3. Generally stable with only minor deviations or low-severity issues.`;
 
     const completion = await openai.chat.completions.create({
       model: "gpt-4o-mini",
@@ -555,16 +669,17 @@ Urgency Guidelines:
         summary: analysis.summary || "Unable to generate summary.",
         urgency: analysis.urgency || "stable",
         urgencyScore: analysis.urgencyScore || 0,
-        reasons: analysis.reasons || [],
-        keyConcerns: analysis.keyConcerns || [],
+        // Store keyFindings as reasons for physician-facing display
+        reasons: analysis.keyFindings || [],
+        keyConcerns: [],
       },
       create: {
         userId,
         summary: analysis.summary || "Unable to generate summary.",
         urgency: analysis.urgency || "stable",
         urgencyScore: analysis.urgencyScore || 0,
-        reasons: analysis.reasons || [],
-        keyConcerns: analysis.keyConcerns || [],
+        reasons: analysis.keyFindings || [],
+        keyConcerns: [],
       },
     });
 

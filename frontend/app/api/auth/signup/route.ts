@@ -79,35 +79,28 @@ export async function POST(request: NextRequest) {
 
     // Link patient to default cardiologist
     if (role === "patient") {
-      // Find the default cardiologist
-      const cardiologist = await prisma.user.findUnique({
-        where: { email: "cardiologist@cardiotrack.com" },
-      });
-
-      if (cardiologist) {
-        try {
-          // Use upsert to handle case where relationship might already exist
-          await prisma.physicianPatient.upsert({
-            where: {
-              physicianId_patientId: {
-                physicianId: cardiologist.id,
-                patientId: user.id,
-              },
-            },
-            update: {}, // No update needed if it exists
-            create: {
-              physicianId: cardiologist.id,
+      // Use hardcoded cardiologist ID
+      const cardiologistId = "cmifij1pi0000lw9w2l0wdo4m";
+      
+      try {
+        // Use upsert to handle case where relationship might already exist
+        await prisma.physicianPatient.upsert({
+          where: {
+            physicianId_patientId: {
+              physicianId: cardiologistId,
               patientId: user.id,
             },
-          });
-          console.log(`✅ Linked patient ${user.id} (${user.email}) to cardiologist ${cardiologist.id} (${cardiologist.email})`);
-        } catch (error) {
-          console.error("Error creating physician-patient relationship:", error);
-          // Don't fail the signup if this fails, but log it
-        }
-      } else {
-        console.warn("⚠️ Default cardiologist not found. Patient will not be linked to a physician.");
-        console.warn("⚠️ Run 'npx prisma db seed' to create the default cardiologist.");
+          },
+          update: {}, // No update needed if it exists
+          create: {
+            physicianId: cardiologistId,
+            patientId: user.id,
+          },
+        });
+        console.log(`✅ Linked patient ${user.id} (${user.email}) to cardiologist ${cardiologistId}`);
+      } catch (error) {
+        console.error("Error creating physician-patient relationship:", error);
+        // Don't fail the signup if this fails, but log it
       }
     }
 

@@ -136,7 +136,7 @@ export default function SignupPage() {
             <Heart className="w-8 h-8 text-blue-600" />
           </div>
         </div>
-        <h1 className="text-2xl font-bold text-center mb-2">CardioTrack</h1>
+        <h1 className="text-2xl font-bold text-center mb-2">ChronicTrack</h1>
         <p className="text-gray-600 text-center mb-6">Create your account</p>
         
         <form onSubmit={handleSubmit} className="space-y-6">
@@ -310,9 +310,9 @@ export default function SignupPage() {
                 </div>
               </div>
 
-              {/* Family History of Heart Disease */}
+              {/* Family History */}
               <div>
-                <label className="block text-sm font-medium mb-2">Family History of Heart Disease</label>
+                <label className="block text-sm font-medium mb-2">Family History</label>
                 <textarea
                   value={formData.familyHistoryHeartDisease}
                   onChange={(e) => setFormData({ ...formData, familyHistoryHeartDisease: e.target.value })}

@@ -17,7 +17,7 @@ import {
   ResponsiveContainer,
   Label,
 } from "recharts";
-import { Calendar, Pill, Activity, User, Heart, MessageCircle, LogOut } from "lucide-react";
+import { Calendar, Pill, Activity, User, Heart, MessageCircle, LogOut, Stethoscope } from "lucide-react";
 
 type PhysicianStatus = "urgent" | "monitor" | "stable";
 type ActiveTab = "profile" | "data" | "chat" | "timeline";
@@ -117,6 +117,21 @@ const CardiologyMVP = () => {
     weight: number | null;
   }>>([]);
   const [loadingData, setLoadingData] = useState(true);
+  const [metrics, setMetrics] = useState<{
+    bp: {
+      percentInRange14d: number;
+      avgSys3d: number;
+      avgDia3d: number;
+    } | null;
+    glucose: {
+      percentInRange14d: number;
+      avgGlucose3d: number;
+    } | null;
+    weight: {
+      change7d: number | null;
+      weeklyAlert: boolean;
+    } | null;
+  } | null>(null);
 
   // Chat state
   const [chatMessages, setChatMessages] = useState<Array<{
@@ -140,6 +155,14 @@ const CardiologyMVP = () => {
     lastUpdated?: Date;
   }>>({});
 
+  // Helper to get today's local date/time in the format expected by datetime-local
+  const getLocalDateTimeForInput = () => {
+    const now = new Date();
+    const tzOffsetMinutes = now.getTimezoneOffset();
+    const localTime = new Date(now.getTime() - tzOffsetMinutes * 60 * 1000);
+    return localTime.toISOString().slice(0, 16); // "YYYY-MM-DDTHH:mm" in local time
+  };
+
   // State for measurements (3 measurements per metric) - must be before any returns
   const [measurements, setMeasurements] = useState({
     bloodPressure: [
@@ -149,7 +172,7 @@ const CardiologyMVP = () => {
     ],
     glucose: "",
     weight: "",
-    dateTime: new Date().toISOString().slice(0, 16),
+    dateTime: getLocalDateTimeForInput(),
   });
 
   // Redirect to login if not authenticated
@@ -197,6 +220,15 @@ const CardiologyMVP = () => {
           const eventsData = await eventsResponse.json();
           if (eventsData.success) {
             setEvents(eventsData.data || []);
+          }
+        }
+
+        // Fetch derived metrics
+        const metricsResponse = await fetch("/api/patient/metrics");
+        if (metricsResponse.ok) {
+          const metricsData = await metricsResponse.json();
+          if (metricsData.success) {
+            setMetrics(metricsData.data);
           }
         }
       } catch (error) {
@@ -629,6 +661,15 @@ const CardiologyMVP = () => {
 
   // Helper function to calculate BP summary metrics
   const calculateBPMetrics = () => {
+    // Prefer backend-computed metrics when available
+    if (metrics?.bp) {
+      return {
+        percentInRange: metrics.bp.percentInRange14d,
+        avgSys: metrics.bp.avgSys3d,
+        avgDia: metrics.bp.avgDia3d,
+      };
+    }
+
     if (bpData.length === 0) return null;
     
     const last14Days = bpData.slice(0, 14); // Most recent 14 days
@@ -671,16 +712,28 @@ const CardiologyMVP = () => {
         {metrics && (
           <div className="mb-4 grid grid-cols-3 gap-4">
             <div className="bg-blue-50 rounded-lg p-3 border border-blue-200">
-              <p className="text-xs text-gray-600 mb-1">% in Target Range (14d)</p>
-              <p className="text-lg font-bold text-blue-700">{metrics.percentInRange}%</p>
+              <p className="text-sm text-gray-700 mb-1">
+                % of BP Readings in Target Range (Last 14 Days)
+              </p>
+              <p className="text-lg font-bold text-blue-700">
+                {metrics.percentInRange}%
+              </p>
             </div>
             <div className="bg-blue-50 rounded-lg p-3 border border-blue-200">
-              <p className="text-xs text-gray-600 mb-1">3-Day Avg SBP</p>
-              <p className="text-lg font-bold text-blue-700">{metrics.avgSys} mmHg</p>
+              <p className="text-sm text-gray-700 mb-1">
+                3-Day Average Systolic BP
+              </p>
+              <p className="text-lg font-bold text-blue-700">
+                {metrics.avgSys} mmHg
+              </p>
             </div>
-            <div className="bg-blue-50 rounded-lg p-3 border border-blue-200">
-              <p className="text-xs text-gray-600 mb-1">3-Day Avg DBP</p>
-              <p className="text-lg font-bold text-blue-700">{metrics.avgDia} mmHg</p>
+            <div className="bg-orange-50 rounded-lg p-3 border border-orange-200">
+              <p className="text-sm text-gray-800 mb-1">
+                3-Day Average Diastolic BP
+              </p>
+              <p className="text-lg font-bold text-orange-600">
+                {metrics.avgDia} mmHg
+              </p>
             </div>
           </div>
         )}
@@ -731,9 +784,9 @@ const CardiologyMVP = () => {
             <Line
               type="monotone"
               dataKey="diastolic"
-              stroke="#22c55e"
+              stroke="#f97316" // Orange to distinguish from green target band
               strokeWidth={3}
-              dot={{ r: 3, fill: "#22c55e" }}
+              dot={{ r: 3, fill: "#f97316" }}
               name="Diastolic BP"
             />
           </LineChart>
@@ -744,29 +797,38 @@ const CardiologyMVP = () => {
 
   // Helper function to calculate weight summary metrics
   const calculateWeightMetrics = () => {
+    if (weightData.length === 0 && !profileWeight) return null;
+
+    // Prefer backend-computed metrics when available (7-day change only)
+    if (metrics?.weight) {
+      return {
+        change7d: metrics.weight.change7d,
+        weeklyAlert: metrics.weight.weeklyAlert,
+      };
+    }
+
     if (weightData.length === 0) return null;
-    
+
     const today = weightData[0];
-    const yesterday = weightData[1];
     const weekAgo = weightData.find((d, idx) => {
       if (idx === 0) return false;
-      const daysDiff = (new Date(today.timestamp).getTime() - new Date(d.timestamp).getTime()) / (1000 * 60 * 60 * 24);
+      const daysDiff =
+        (new Date(today.timestamp).getTime() -
+          new Date(d.timestamp).getTime()) /
+        (1000 * 60 * 60 * 24);
       return daysDiff >= 6 && daysDiff <= 8; // 6-8 days ago
     });
-    
-    const change24h = yesterday && today.weight && yesterday.weight
-      ? (today.weight - yesterday.weight).toFixed(1)
-      : null;
-    
-    const change7d = weekAgo && today.weight && weekAgo.weight
-      ? (today.weight - weekAgo.weight).toFixed(1)
-      : null;
-    
-    // Check for alerts
-    const dailyAlert = change24h && Math.abs(parseFloat(change24h)) > goals.weightDailyAlertThreshold;
-    const weeklyAlert = change7d && Math.abs(parseFloat(change7d)) > goals.weightWeeklyAlertThreshold;
-    
-    return { change24h, change7d, dailyAlert, weeklyAlert };
+
+    const change7d =
+      weekAgo && today.weight && weekAgo.weight
+        ? today.weight - weekAgo.weight
+        : null;
+
+    const weeklyAlert =
+      change7d !== null &&
+      Math.abs(change7d) > (goals.weightWeeklyAlertThreshold ?? 5.0);
+
+    return { change7d, weeklyAlert };
   };
 
   const renderWeightChart = () => {
@@ -796,27 +858,30 @@ const CardiologyMVP = () => {
       ticks.push(i);
     }
     
-    // Baseline band range (±2 lbs around baseline)
-    const baselineMin = goals.weightBaseline ? goals.weightBaseline - 2 : null;
-    const baselineMax = goals.weightBaseline ? goals.weightBaseline + 2 : null;
-    
     return (
       <div>
-        {/* Summary Metrics */}
+        {/* Summary Metrics - 7-day change only */}
         {metrics && (
-          <div className="mb-4 grid grid-cols-2 gap-4">
-            <div className={`rounded-lg p-3 border ${metrics.dailyAlert ? 'bg-red-50 border-red-200' : 'bg-green-50 border-green-200'}`}>
-              <p className="text-xs text-gray-600 mb-1">24h Change</p>
-              <p className={`text-lg font-bold ${metrics.dailyAlert ? 'text-red-700' : 'text-green-700'}`}>
-                {metrics.change24h ? `${parseFloat(metrics.change24h) > 0 ? '+' : ''}${metrics.change24h} lbs` : 'N/A'}
-                {metrics.dailyAlert && ' ⚠️'}
-              </p>
-            </div>
-            <div className={`rounded-lg p-3 border ${metrics.weeklyAlert ? 'bg-red-50 border-red-200' : 'bg-green-50 border-green-200'}`}>
-              <p className="text-xs text-gray-600 mb-1">7-Day Change</p>
-              <p className={`text-lg font-bold ${metrics.weeklyAlert ? 'text-red-700' : 'text-green-700'}`}>
-                {metrics.change7d ? `${parseFloat(metrics.change7d) > 0 ? '+' : ''}${metrics.change7d} lbs` : 'N/A'}
-                {metrics.weeklyAlert && ' ⚠️'}
+          <div className="mb-4 grid grid-cols-1 gap-4">
+            <div
+              className={`rounded-lg p-3 border ${
+                metrics.weeklyAlert
+                  ? "bg-red-50 border-red-200"
+                  : "bg-sky-50 border-sky-200"
+              }`}
+            >
+              <p className="text-sm text-gray-700 mb-1">7-Day Change</p>
+              <p
+                className={`text-lg font-bold ${
+                  metrics.weeklyAlert ? "text-red-700" : "text-sky-700"
+                }`}
+              >
+                {metrics.change7d !== null
+                  ? `${metrics.change7d > 0 ? "+" : ""}${metrics.change7d.toFixed(
+                      1
+                    )} lbs`
+                  : "N/A"}
+                {metrics.weeklyAlert && " ⚠️"}
               </p>
             </div>
           </div>
@@ -825,7 +890,7 @@ const CardiologyMVP = () => {
         <ResponsiveContainer width="100%" height={320} style={{ outline: 'none' }}>
           <LineChart
             data={weightData.length > 0 ? weightData : [{ readable: "Profile", weight: profileWeight }]}
-            margin={{ top: 20, right: 80, left: 60, bottom: 30 }}
+            margin={{ top: 60, right: 80, left: 60, bottom: 30 }}
             style={{ outline: 'none' }}
           >
             <CartesianGrid strokeDasharray="3 3" />
@@ -842,25 +907,14 @@ const CardiologyMVP = () => {
             </YAxis>
             <Tooltip />
             
-            {/* Baseline band if baseline exists */}
-            {baselineMin && baselineMax && (
-              <ReferenceArea
-                y1={baselineMin}
-                y2={baselineMax}
-                fill="#d1d5db"
-                fillOpacity={0.2}
-                stroke="none"
-              />
-            )}
-            
             {weightData.length > 0 && getEventLines(weightData)}
             {/* Show line connecting points with visible colored dots */}
             <Line
               type="monotone"
               dataKey="weight"
-              stroke="#10b981"
+              stroke="#0ea5e9"
               strokeWidth={3}
-              dot={{ r: 3, fill: "#10b981" }}
+              dot={{ r: 3, fill: "#0ea5e9" }}
               name="Weight"
             />
           </LineChart>
@@ -926,12 +980,18 @@ const CardiologyMVP = () => {
         {metrics && (
           <div className="mb-4 grid grid-cols-2 gap-4">
             <div className="bg-purple-50 rounded-lg p-3 border border-purple-200">
-              <p className="text-xs text-gray-600 mb-1">% in Target Range (14d)</p>
-              <p className="text-lg font-bold text-purple-700">{metrics.percentInRange}%</p>
+              <p className="text-sm text-gray-700 mb-1">
+                % of Glucose Readings in Target Range (Last 14 Days)
+              </p>
+              <p className="text-lg font-bold text-purple-700">
+                {metrics.percentInRange}%
+              </p>
             </div>
             <div className="bg-purple-50 rounded-lg p-3 border border-purple-200">
-              <p className="text-xs text-gray-600 mb-1">3-Day Average</p>
-              <p className="text-lg font-bold text-purple-700">{metrics.avgGlucose} mg/dL</p>
+              <p className="text-sm text-gray-700 mb-1">3-Day Average Glucose</p>
+              <p className="text-lg font-bold text-purple-700">
+                {metrics.avgGlucose} mg/dL
+              </p>
             </div>
           </div>
         )}
@@ -939,7 +999,7 @@ const CardiologyMVP = () => {
         <ResponsiveContainer width="100%" height={320} style={{ outline: 'none' }}>
           <LineChart
             data={glucoseData}
-            margin={{ top: 20, right: 80, left: 60, bottom: 30 }}
+            margin={{ top: 60, right: 80, left: 60, bottom: 30 }}
             style={{ outline: 'none' }}
           >
             <CartesianGrid strokeDasharray="3 3" />
@@ -1017,8 +1077,7 @@ const CardiologyMVP = () => {
       const data = await response.json();
 
       if (response.ok) {
-        alert("Measurements saved successfully!");
-        // Reset form
+        // Reset form (no popup message)
         setMeasurements({
           bloodPressure: [
             { systolic: "", diastolic: "" },
@@ -1027,7 +1086,7 @@ const CardiologyMVP = () => {
           ],
           glucose: "",
           weight: "",
-          dateTime: new Date().toISOString().slice(0, 16),
+          dateTime: getLocalDateTimeForInput(),
         });
         // Refresh measurements data
         const measurementsResponse = await fetch("/api/measurements");
@@ -1239,10 +1298,10 @@ const CardiologyMVP = () => {
             <div className="space-y-6">
               {/* Blood Pressure */}
               <div className="p-4 border-2 border-blue-200 rounded-lg">
-                <label className="block text-lg font-semibold text-gray-800 mb-3">
+                <label className="block text-xl font-semibold text-gray-900 mb-2">
                   Blood Pressure
                 </label>
-                <p className="text-xs text-gray-600 mb-4">
+                <p className="text-sm text-gray-700 mb-4">
                   Take 3 measurements and enter all values. We&apos;ll average them automatically.
                 </p>
                 {[0, 1, 2].map((index) => (
@@ -1316,7 +1375,6 @@ const CardiologyMVP = () => {
                 <p className="text-sm text-gray-500 mt-1">mg/dL (fasting)</p>
               </div>
 
-
               {/* Date/Time */}
               <div className="p-4 bg-gray-50 rounded-lg">
                 <label className="block text-sm font-semibold text-gray-800 mb-2">
@@ -1364,7 +1422,7 @@ const CardiologyMVP = () => {
                   {chatMessages.length === 0 && (
                     <div className="flex items-start space-x-3">
                       <div className="bg-blue-100 p-2 rounded-full">
-                        <MessageCircle className="w-5 h-5 text-blue-600" />
+                        <Stethoscope className="w-5 h-5 text-blue-600" />
                       </div>
                       <div className="bg-white p-3 rounded-lg shadow-sm max-w-md">
                         <p className="text-sm text-gray-800">
@@ -1384,7 +1442,7 @@ const CardiologyMVP = () => {
                     >
                       {msg.role === "assistant" && (
                         <div className="bg-blue-100 p-2 rounded-full">
-                          <MessageCircle className="w-5 h-5 text-blue-600" />
+                          <Stethoscope className="w-5 h-5 text-blue-600" />
                         </div>
                       )}
                       <div
@@ -1407,7 +1465,7 @@ const CardiologyMVP = () => {
                   {sendingMessage && (
                     <div className="flex items-start space-x-3">
                       <div className="bg-blue-100 p-2 rounded-full">
-                        <MessageCircle className="w-5 h-5 text-blue-600" />
+                        <Stethoscope className="w-5 h-5 text-blue-600" />
                       </div>
                       <div className="bg-white p-3 rounded-lg shadow-sm">
                         <div className="flex space-x-1">
@@ -1447,10 +1505,6 @@ const CardiologyMVP = () => {
                   Send
                 </button>
               </div>
-              <p className="text-xs text-gray-500 mt-2">
-                💡 Tip: Mention any symptoms, medication changes, or lifestyle updates. Your responses
-                help us provide better care.
-              </p>
             </div>
           </div>
         </div>
@@ -1461,19 +1515,34 @@ const CardiologyMVP = () => {
         <div className="space-y-6">
           {/* Blood Pressure Chart */}
           <div className="bg-white rounded-lg shadow-md p-6">
-            <h2 className="text-2xl font-bold text-gray-800 mb-6">Blood Pressure Timeline</h2>
+            <h2 className="text-2xl font-bold text-gray-800 mb-2">
+              Blood Pressure Timeline
+            </h2>
+            <p className="text-sm text-gray-600 mb-4">
+              Green shaded band shows the target blood pressure range set for this patient; lines show actual systolic and diastolic readings over time.
+            </p>
             <div className="mb-4">{renderBPChart()}</div>
           </div>
 
           {/* Weight Chart */}
           <div className="bg-white rounded-lg shadow-md p-6">
-            <h2 className="text-2xl font-bold text-gray-800 mb-6">Weight Timeline</h2>
+            <h2 className="text-2xl font-bold text-gray-800 mb-2">
+              Weight Timeline
+            </h2>
+            <p className="text-sm text-gray-600 mb-4">
+              Line shows recorded weights over time; alerts are based on 7-day weight change relative to the patient&apos;s baseline.
+            </p>
             <div className="mb-4">{renderWeightChart()}</div>
           </div>
 
           {/* Glucose Chart */}
           <div className="bg-white rounded-lg shadow-md p-6">
-            <h2 className="text-2xl font-bold text-gray-800 mb-6">Glucose Timeline</h2>
+            <h2 className="text-2xl font-bold text-gray-800 mb-2">
+              Glucose (Fasting) Timeline
+            </h2>
+            <p className="text-sm text-gray-600 mb-4">
+              Green shaded band shows the target fasting glucose range set for this patient; the line shows actual fasting glucose readings over time.
+            </p>
             <div className="mb-4">{renderGlucoseChart()}</div>
           </div>
 
@@ -1798,8 +1867,8 @@ const CardiologyMVP = () => {
                 <Heart className="w-8 h-8 text-blue-600" />
               </div>
               <div>
-                <h1 className="text-3xl font-bold text-gray-800">CardioTrack</h1>
-                <p className="text-gray-600">AI-Assisted Cardiac Care Monitoring</p>
+                <h1 className="text-3xl font-bold text-gray-800">ChronicTrack</h1>
+                <p className="text-gray-600">AI-Assisted Chronic Care Management</p>
               </div>
             </div>
             <div className="flex flex-col items-start md:items-end gap-2">
