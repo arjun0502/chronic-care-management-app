@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/app/api/auth/[...nextauth]/route";
 import { prisma } from "@/lib/prisma";
+import { PrismaClientKnownRequestError } from "@prisma/client/runtime/library";
 
 // Helper function to calculate average
 function calculateAverage(values: (string | number)[]): number {
@@ -73,7 +74,7 @@ export async function POST(request: NextRequest) {
 }
 
 // GET endpoint to retrieve measurements for a user
-export async function GET() {
+export async function GET(request: NextRequest) {
   try {
     // Get authenticated user
     const session = await auth();
@@ -84,7 +85,49 @@ export async function GET() {
       );
     }
 
-    const userId = session.user.id;
+    const { searchParams } = new URL(request.url);
+    const patientId = searchParams.get("patientId") || session.user.id;
+
+    // If requesting another patient's measurements, verify user is a physician
+    if (patientId !== session.user.id && session.user.role !== "physician") {
+      return NextResponse.json(
+        { success: false, error: "Unauthorized to view this patient's measurements" },
+        { status: 403 }
+      );
+    }
+
+    // If physician, verify relationship
+    if (patientId !== session.user.id) {
+      try {
+        const relationship = await prisma.physicianPatient.findFirst({
+          where: {
+            physicianId: session.user.id,
+            patientId: patientId,
+          },
+        });
+
+        if (!relationship) {
+          return NextResponse.json(
+            { success: false, error: "Patient not found or access denied" },
+            { status: 403 }
+          );
+        }
+      } catch (dbError) {
+        if (dbError instanceof PrismaClientKnownRequestError && dbError.code === "P1001") {
+          console.error("Database connection error while verifying physician access:", dbError);
+          return NextResponse.json(
+            {
+              success: false,
+              error: "Database connection failed. Please check your database configuration.",
+            },
+            { status: 503 }
+          );
+        }
+        throw dbError;
+      }
+    }
+
+    const userId = patientId;
 
     const measurements = await prisma.measurement.findMany({
       where: { userId },
@@ -98,6 +141,15 @@ export async function GET() {
     });
   } catch (error) {
     console.error("Error fetching measurements:", error);
+    if (error instanceof PrismaClientKnownRequestError && error.code === "P1001") {
+      return NextResponse.json(
+        {
+          success: false,
+          error: "Database connection failed. Please check your database configuration.",
+        },
+        { status: 503 }
+      );
+    }
     return NextResponse.json(
       { success: false, error: "Failed to fetch measurements" },
       { status: 500 }

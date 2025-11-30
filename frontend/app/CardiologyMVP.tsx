@@ -19,7 +19,6 @@ import {
 } from "recharts";
 import { Calendar, Pill, Activity, User, Heart, MessageCircle, LogOut, Stethoscope } from "lucide-react";
 
-type PhysicianStatus = "urgent" | "monitor" | "stable";
 type ActiveTab = "profile" | "data" | "chat" | "timeline";
 
 type BpPoint = {
@@ -60,7 +59,7 @@ const CardiologyMVP = () => {
   const { data: session, status } = useSession();
   const router = useRouter();
   const [activeTab, setActiveTab] = useState<ActiveTab>("profile");
-  const [selectedPatientId, setSelectedPatientId] = useState("john-smith");
+  const [selectedPatientId, setSelectedPatientId] = useState<string | null>(null);
   
   // State for patient profile and measurements
   const [patientProfile, setPatientProfile] = useState<{
@@ -145,15 +144,115 @@ const CardiologyMVP = () => {
   const [sendingMessage, setSendingMessage] = useState(false);
   const [loadingChat, setLoadingChat] = useState(true);
 
-  // State for patient analyses (physician view) - must be before any returns
-  const [patientAnalyses] = useState<Record<string, {
-    summary: string;
+  // State for physician patients (physician view) - must be before any returns
+  const [physicianPatients, setPhysicianPatients] = useState<Array<{
+    id: string;
+    name: string;
+    age: number | null;
+    conditions: string[];
     urgency: "urgent" | "monitor" | "stable";
-    urgencyScore: number;
-    reasons: string[];
-    keyConcerns: string[];
-    lastUpdated?: Date;
-  }>>({});
+    summary: string;
+    analysisDate: string | null;
+  }>>([]);
+  const [loadingPhysicianPatients, setLoadingPhysicianPatients] = useState(false);
+
+  // State for selected patient detail (physician view)
+  const [selectedPatientDetail, setSelectedPatientDetail] = useState<{
+    profile: {
+      id: string;
+      name: string;
+      dob: string | null;
+      age: number | null;
+      sex: string | null;
+      height: number | null;
+      weight: number | null;
+      conditions: string[];
+      allergies: string[];
+      familyHistoryHeartDisease: string | null;
+      smokingHistory: string | null;
+      smokingDetails: string | null;
+      alcoholUse: string | null;
+      medications: Array<{ name: string; dosage: string; frequency: string }>;
+      physician: { id: string; name: string; email: string } | null;
+      goals: {
+        systolicMin: number | null;
+        systolicMax: number | null;
+        diastolicMin: number | null;
+        diastolicMax: number | null;
+        glucoseMin: number | null;
+        glucoseMax: number | null;
+        weightBaseline: number | null;
+        weightDailyAlertThreshold: number | null;
+        weightWeeklyAlertThreshold: number | null;
+      } | null;
+    } | null;
+    analysis: {
+      summary: string;
+      urgency: "urgent" | "monitor" | "stable";
+      urgencyScore: number;
+      reasons: string[];
+      keyConcerns: string[];
+      lastUpdated?: string;
+    } | null;
+    measurements: Array<{
+      id: string;
+      userId: string;
+      date: string;
+      systolic: number | null;
+      diastolic: number | null;
+      glucose: number | null;
+      weight: number | null;
+    }>;
+    events: Array<{
+      id: string;
+      date: string;
+      title: string;
+      description: string | null;
+      lifestyleChanges: string[];
+      medicationChanges: string[];
+    }>;
+    metrics: {
+      bp: {
+        percentInRange14d: number;
+        avgSys3d: number;
+        avgDia3d: number;
+      } | null;
+      glucose: {
+        percentInRange14d: number;
+        avgGlucose3d: number;
+      } | null;
+      weight: {
+        change7d: number | null;
+        weeklyAlert: boolean;
+      } | null;
+    } | null;
+    goals: {
+      systolicMin: number | null;
+      systolicMax: number | null;
+      diastolicMin: number | null;
+      diastolicMax: number | null;
+      glucoseMin: number | null;
+      glucoseMax: number | null;
+      weightBaseline: number | null;
+      weightDailyAlertThreshold: number | null;
+      weightWeeklyAlertThreshold: number | null;
+    } | null;
+  } | null>(null);
+  const [loadingPatientDetail, setLoadingPatientDetail] = useState(false);
+  const [showPatientDetail, setShowPatientDetail] = useState(false);
+  const [editingGoals, setEditingGoals] = useState(false);
+  const [savingGoals, setSavingGoals] = useState(false);
+  const [goalFormData, setGoalFormData] = useState<{
+    systolicMin: number | null;
+    systolicMax: number | null;
+    diastolicMin: number | null;
+    diastolicMax: number | null;
+    glucoseMin: number | null;
+    glucoseMax: number | null;
+    weightBaseline: number | null;
+    weightDailyAlertThreshold: number | null;
+    weightWeeklyAlertThreshold: number | null;
+  } | null>(null);
 
   // Helper to get today's local date/time in the format expected by datetime-local
   const getLocalDateTimeForInput = () => {
@@ -358,20 +457,92 @@ const CardiologyMVP = () => {
     }
   };
 
-  // Load patient analyses when physician view is active (must be before early returns)
+  // Fetch physician patients when physician view is active (must be before early returns)
   useEffect(() => {
     if (status !== "authenticated" || !session?.user?.id) return;
     if (session.user.role !== "physician") return;
 
-    const loadPatientAnalyses = async () => {
-      // TODO: Replace with actual patient IDs from database
-      // For now, this is a placeholder - will need to fetch actual patients from physician-patient relationships
-      // The hardcoded physicianPatients array doesn't have real patient IDs
-      // This will be implemented when we connect to real patient data
+    const fetchPhysicianPatients = async () => {
+      try {
+        setLoadingPhysicianPatients(true);
+        const response = await fetch("/api/physician/patients");
+        if (response.ok) {
+          const data = await response.json();
+          if (data.success) {
+            setPhysicianPatients(data.data);
+            // Set first patient as selected if none selected
+            if (data.data.length > 0 && selectedPatientId === null) {
+              setSelectedPatientId(data.data[0].id);
+            }
+          }
+        }
+      } catch (error) {
+        console.error("Error fetching physician patients:", error);
+      } finally {
+        setLoadingPhysicianPatients(false);
+      }
     };
 
-    loadPatientAnalyses();
+    fetchPhysicianPatients();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [status, session]);
+
+  // Fetch patient detail when a patient is selected (physician view)
+  const fetchPatientDetail = async (patientId: string) => {
+    try {
+      setLoadingPatientDetail(true);
+      
+      // Fetch all data in parallel
+      const [profileRes, analysisRes, measurementsRes, eventsRes, metricsRes, goalsRes] = await Promise.all([
+        fetch(`/api/patient/profile?patientId=${patientId}`),
+        fetch(`/api/patient/analysis?patientId=${patientId}`),
+        fetch(`/api/measurements?patientId=${patientId}`),
+        fetch(`/api/patient/events?patientId=${patientId}`),
+        fetch(`/api/patient/metrics?patientId=${patientId}`),
+        fetch(`/api/patient/goals?patientId=${patientId}`),
+      ]);
+
+      const profileData = profileRes.ok ? await profileRes.json() : null;
+      const analysisData = analysisRes.ok ? await analysisRes.json() : null;
+      const measurementsData = measurementsRes.ok ? await measurementsRes.json() : null;
+      const eventsData = eventsRes.ok ? await eventsRes.json() : null;
+      const metricsData = metricsRes.ok ? await metricsRes.json() : null;
+      const goalsData = goalsRes.ok ? await goalsRes.json() : null;
+
+      setSelectedPatientDetail({
+        profile: profileData?.success ? profileData.data : null,
+        analysis: analysisData?.success ? analysisData.data : null,
+        measurements: measurementsData?.success ? (measurementsData.data || []) : [],
+        events: eventsData?.success ? (eventsData.data || []) : [],
+        metrics: metricsData?.success ? metricsData.data : null,
+        goals: goalsData?.success ? {
+          systolicMin: goalsData.data?.systolicMin ?? null,
+          systolicMax: goalsData.data?.systolicMax ?? null,
+          diastolicMin: goalsData.data?.diastolicMin ?? null,
+          diastolicMax: goalsData.data?.diastolicMax ?? null,
+          glucoseMin: goalsData.data?.glucoseMin ?? null,
+          glucoseMax: goalsData.data?.glucoseMax ?? null,
+          weightBaseline: goalsData.data?.weightBaseline ?? null,
+          weightDailyAlertThreshold: goalsData.data?.weightDailyAlertThreshold ?? null,
+          weightWeeklyAlertThreshold: goalsData.data?.weightWeeklyAlertThreshold ?? null,
+        } : null,
+      });
+    } catch (error) {
+      console.error("Error fetching patient detail:", error);
+    } finally {
+      setLoadingPatientDetail(false);
+    }
+  };
+
+  // Fetch patient detail when selectedPatientId changes (physician view)
+  useEffect(() => {
+    if (status !== "authenticated" || !session?.user?.id) return;
+    if (session.user.role !== "physician") return;
+    if (!selectedPatientId) return;
+
+    fetchPatientDetail(selectedPatientId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedPatientId]);
 
   // Show loading while checking auth
   if (status === "loading") {
@@ -485,57 +656,6 @@ const CardiologyMVP = () => {
         timestamp: date.getTime(),
       };
     });
-
-  // Physician dashboard patients
-  const physicianPatients: {
-    id: string;
-    name: string;
-    age: number;
-    status: PhysicianStatus;
-    lastCheckIn: string;
-    keyIssue: string;
-    summary: string;
-    medChanges: string;
-    lifestyle: string;
-  }[] = [
-    {
-      id: "john-smith",
-      name: "John Smith",
-      age: 70,
-      status: "urgent",
-      lastCheckIn: "2 hours ago",
-      keyIssue: "Rising systolic BP and new chest discomfort",
-      summary:
-        "Reports intermittent chest tightness with exertion and mild shortness of breath.",
-      medChanges: "Started Lisinopril 10mg on Oct 22; Metoprolol titrated 1 month ago.",
-      lifestyle: "Walking 10–15 min/day; sleep fragmented (5–6 hrs); diet high in sodium.",
-    },
-    {
-      id: "maria-garcia",
-      name: "Maria Garcia",
-      age: 63,
-      status: "monitor",
-      lastCheckIn: "Yesterday",
-      keyIssue: "Occasional palpitations, BP near goal",
-      summary: "Stable CAD with rare palpitations; no chest pain reported.",
-      medChanges: "No recent changes; adherent to beta-blocker and statin.",
-      lifestyle: "Walking 30 min most days; working on reducing sugar intake.",
-    },
-    {
-      id: "david-lee",
-      name: "David Lee",
-      age: 58,
-      status: "stable",
-      lastCheckIn: "4 days ago",
-      keyIssue: "BP and lipids at goal, asymptomatic",
-      summary: "Feels well, no chest pain, dyspnea, or edema.",
-      medChanges: "On stable regimen for past 6 months.",
-      lifestyle: "Regular cycling 3x/week; following low-sodium diet.",
-    },
-  ];
-
-  const selectedPatient =
-    physicianPatients.find((p) => p.id === selectedPatientId) || physicianPatients[0];
 
 
   const CustomTooltip = ({ active, payload }: TooltipProps) => {
@@ -1599,234 +1719,917 @@ const CardiologyMVP = () => {
     </>
   );
 
-  // ---------------- PHYSICIAN VIEW ----------------
-  const renderPhysicianView = () => (
-    <div className="space-y-6">
-      {/* Dashboard buckets */}
-      <div className="bg-white rounded-lg shadow-md p-6">
-        <div className="flex items-center justify-between mb-4">
-          <h2 className="text-2xl font-bold text-gray-800">Patient Triage Dashboard</h2>
-          <p className="text-sm text-gray-500">Grouped by clinical urgency</p>
+  // Helper functions to prepare chart data from selectedPatientDetail
+  const prepareSelectedPatientChartData = () => {
+    if (!selectedPatientDetail) return { bpData: [], weightData: [], glucoseData: [] };
+
+    const measurements = selectedPatientDetail.measurements || [];
+    const profileWeight = selectedPatientDetail.profile?.weight || null;
+    const goals = selectedPatientDetail.goals || {
+      systolicMin: null,
+      systolicMax: null,
+      diastolicMin: null,
+      diastolicMax: null,
+      glucoseMin: null,
+      glucoseMax: null,
+      weightBaseline: null,
+      weightDailyAlertThreshold: null,
+      weightWeeklyAlertThreshold: null,
+    };
+
+    // BP Chart Data
+    const bpData: BpPoint[] = measurements
+      .filter(m => m.systolic !== null && m.diastolic !== null)
+      .slice(0, 20)
+      .reverse()
+      .map((m) => {
+        const date = new Date(m.date);
+        const month = date.getMonth() + 1;
+        const day = date.getDate();
+        return {
+          date: `${month}/${day}`,
+          systolic: m.systolic as number,
+          diastolic: m.diastolic as number,
+          readable: date.toLocaleDateString("en-US", { month: "short", day: "numeric" }),
+          timestamp: date.getTime(),
+        };
+      });
+
+    // Weight Chart Data
+    const weightData = measurements
+      .filter(m => m.weight !== null || profileWeight !== null)
+      .slice(0, 20)
+      .reverse()
+      .map((m) => {
+        const date = new Date(m.date);
+        return {
+          date: `${date.getMonth() + 1}/${date.getDate()}`,
+          weight: m.weight !== null ? m.weight : profileWeight,
+          readable: date.toLocaleDateString("en-US", { month: "short", day: "numeric" }),
+          timestamp: date.getTime(),
+        };
+      });
+
+    // Glucose Chart Data
+    const glucoseData = measurements
+      .filter(m => m.glucose !== null)
+      .slice(0, 20)
+      .reverse()
+      .map((m) => {
+        const date = new Date(m.date);
+        return {
+          date: `${date.getMonth() + 1}/${date.getDate()}`,
+          glucose: m.glucose as number,
+          readable: date.toLocaleDateString("en-US", { month: "short", day: "numeric" }),
+          timestamp: date.getTime(),
+        };
+      });
+
+    return { bpData, weightData, glucoseData, goals };
+  };
+
+  // Helper function to get event lines for selected patient charts
+  const getSelectedPatientEventLines = (chartData: ChartDataPoint[]) => {
+    if (!chartData.length || !selectedPatientDetail?.events) return [];
+    
+    const events = selectedPatientDetail.events;
+    
+    // Helper to get date string (YYYY-MM-DD) from any date input
+    const getDateString = (dateInput: string | number | Date): string => {
+      const d = new Date(dateInput);
+      return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    };
+    
+    // Get date range from chart data (oldest to newest)
+    const firstDate = getDateString(chartData[0].timestamp);
+    const lastDate = getDateString(chartData[chartData.length - 1].timestamp);
+    
+    return events
+      .filter((event) => {
+        const eventDate = getDateString(event.date);
+        return eventDate >= firstDate && eventDate <= lastDate;
+      })
+      .map((event) => {
+        const eventDate = new Date(event.date);
+        // Find the index in chartData closest to this event
+        const closestIndex = chartData.reduce((closest, point, index) => {
+          const eventTime = eventDate.getTime();
+          const currentDiff = Math.abs(point.timestamp - eventTime);
+          const closestDiff = Math.abs(chartData[closest].timestamp - eventTime);
+          return currentDiff < closestDiff ? index : closest;
+        }, 0);
+        
+        return (
+          <ReferenceLine
+            key={event.id}
+            x={chartData[closestIndex]?.readable}
+            stroke="#f59e0b"
+            strokeWidth={2}
+            strokeDasharray="5 5"
+            label={
+              <Label
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                content={(props: any) => {
+                  if (!props || !props.viewBox) return null;
+                  const viewBox = props.viewBox;
+                  const x = typeof viewBox.x === 'number' ? viewBox.x : 0;
+                  const y = typeof viewBox.y === 'number' ? viewBox.y : 0;
+                  return (
+                    <text
+                      x={x}
+                      y={y - 10}
+                      fill="#f59e0b"
+                      fontSize={16}
+                      fontWeight="600"
+                      textAnchor="middle"
+                      style={{ cursor: "pointer" }}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setSelectedEvent(event);
+                      }}
+                      onMouseEnter={(e) => {
+                        e.currentTarget.style.opacity = "0.8";
+                      }}
+                      onMouseLeave={(e) => {
+                        e.currentTarget.style.opacity = "1";
+                      }}
+                    >
+                      {event.title}
+                    </text>
+                  );
+                }}
+              />
+            }
+          />
+        );
+      });
+  };
+
+  // Chart rendering functions for selected patient
+  const renderSelectedPatientBPChart = () => {
+    const { bpData, goals } = prepareSelectedPatientChartData();
+    const patientMetrics = selectedPatientDetail?.metrics;
+
+    if (bpData.length === 0) {
+      return (
+        <div className="flex items-center justify-center h-80 bg-gray-50 rounded-lg">
+          <p className="text-gray-500">No blood pressure data available yet.</p>
         </div>
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-          {/* Urgent */}
-          <div className="border border-red-200 rounded-lg p-3 bg-red-50/40">
-            <p className="text-sm font-semibold text-red-700 mb-2">Urgent</p>
-            <div className="space-y-2">
-              {physicianPatients
-                .filter((p) => p.status === "urgent")
-                .map((p) => (
-                  <button
-                    key={p.id}
-                    onClick={() => setSelectedPatientId(p.id)}
-                    className={`w-full text-left p-3 rounded-lg transition-colors ${
-                      selectedPatientId === p.id ? "bg-red-100" : "bg-white hover:bg-red-50"
-                    }`}
-                  >
-                    <p className="font-semibold text-gray-800">{p.name}</p>
-                    <p className="text-xs text-gray-500">
-                      Age {p.age} • {p.lastCheckIn}
-                    </p>
-                    <p className="text-xs text-red-700 mt-1">{p.keyIssue}</p>
-                  </button>
-                ))}
+      );
+    }
+
+    const metrics = patientMetrics?.bp ? {
+      percentInRange: patientMetrics.bp.percentInRange14d,
+      avgSys: patientMetrics.bp.avgSys3d,
+      avgDia: patientMetrics.bp.avgDia3d,
+    } : null;
+
+    return (
+      <div>
+        {metrics && (
+          <div className="mb-4 grid grid-cols-3 gap-4">
+            <div className="bg-blue-50 rounded-lg p-3 border border-blue-200">
+              <p className="text-sm text-gray-700 mb-1">
+                % of BP Readings in Target Range (Last 14 Days)
+              </p>
+              <p className="text-lg font-bold text-blue-700">{metrics.percentInRange}%</p>
             </div>
-          </div>
-
-          {/* Monitor */}
-          <div className="border border-amber-200 rounded-lg p-3 bg-amber-50/40">
-            <p className="text-sm font-semibold text-amber-700 mb-2">Monitor</p>
-            <div className="space-y-2">
-              {physicianPatients
-                .filter((p) => p.status === "monitor")
-                .map((p) => (
-                  <button
-                    key={p.id}
-                    onClick={() => setSelectedPatientId(p.id)}
-                    className={`w-full text-left p-3 rounded-lg transition-colors ${
-                      selectedPatientId === p.id ? "bg-amber-100" : "bg-white hover:bg-amber-50"
-                    }`}
-                  >
-                    <p className="font-semibold text-gray-800">{p.name}</p>
-                    <p className="text-xs text-gray-500">
-                      Age {p.age} • {p.lastCheckIn}
-                    </p>
-                    <p className="text-xs text-amber-700 mt-1">{p.keyIssue}</p>
-                  </button>
-                ))}
+            <div className="bg-blue-50 rounded-lg p-3 border border-blue-200">
+              <p className="text-sm text-gray-700 mb-1">3-Day Average Systolic BP</p>
+              <p className="text-lg font-bold text-blue-700">{metrics.avgSys} mmHg</p>
             </div>
-          </div>
-
-          {/* Stable */}
-          <div className="border border-emerald-200 rounded-lg p-3 bg-emerald-50/40">
-            <p className="text-sm font-semibold text-emerald-700 mb-2">Stable</p>
-            <div className="space-y-2">
-              {physicianPatients
-                .filter((p) => p.status === "stable")
-                .map((p) => (
-                  <button
-                    key={p.id}
-                    onClick={() => setSelectedPatientId(p.id)}
-                    className={`w-full text-left p-3 rounded-lg transition-colors ${
-                      selectedPatientId === p.id ? "bg-emerald-100" : "bg-white hover:bg-emerald-50"
-                    }`}
-                  >
-                    <p className="font-semibold text-gray-800">{p.name}</p>
-                    <p className="text-xs text-gray-500">
-                      Age {p.age} • {p.lastCheckIn}
-                    </p>
-                    <p className="text-xs text-emerald-700 mt-1">{p.keyIssue}</p>
-                  </button>
-                ))}
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* Selected patient report */}
-      <div className="bg-white rounded-lg shadow-md p-6">
-        <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-2 mb-4">
-          <div>
-            <h2 className="text-2xl font-bold text-gray-800 flex items-center gap-2">
-              <User className="w-6 h-6 text-blue-600" />
-              {selectedPatient.name}
-            </h2>
-            <p className="text-sm text-gray-600">
-              Age {selectedPatient.age} • Status:{" "}
-              <span
-                className={
-                  selectedPatient.status === "urgent"
-                    ? "text-red-600"
-                    : selectedPatient.status === "monitor"
-                    ? "text-amber-600"
-                    : "text-emerald-600"
-                }
-              >
-                {selectedPatient.status.charAt(0).toUpperCase() +
-                  selectedPatient.status.slice(1)}
-              </span>
-            </p>
-          </div>
-          <p className="text-xs text-gray-500">Last check-in: {selectedPatient.lastCheckIn}</p>
-        </div>
-
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-6">
-          {/* Quick profile */}
-          <div className="border rounded-lg p-4 bg-gray-50">
-            <p className="text-sm font-semibold text-gray-700 mb-2">Quick Profile</p>
-            <ul className="text-xs text-gray-700 space-y-1">
-              <li>
-                <span className="font-medium">Key diagnoses:</span> Coronary artery disease,
-                hypertension, type 2 diabetes
-              </li>
-              <li>
-                <span className="font-medium">Allergies:</span> Penicillin
-              </li>
-              <li>
-                <span className="font-medium">Current meds:</span> Atorvastatin, Metoprolol, Aspirin,
-                Lisinopril
-              </li>
-              <li>
-                <span className="font-medium">Risk factors:</span> Age, diabetes, prior smoking
-              </li>
-            </ul>
-          </div>
-
-          {/* What you need to know */}
-          <div className="border rounded-lg p-4 bg-blue-50">
-            <p className="text-sm font-semibold text-blue-800 mb-2">What you need to know</p>
-            <ul className="text-xs text-gray-800 space-y-2 list-disc list-inside">
-              <li>{selectedPatient.summary}</li>
-              <li>
-                We noticed symptoms worsened shortly after:{" "}
-                <span className="font-medium">
-                  {selectedPatient.id === "john-smith"
-                    ? "Lisinopril initiation and recent weight gain."
-                    : "recent lifestyle and medication changes."}
-                </span>
-              </li>
-              <li>
-                Blood pressure trend is{" "}
-                <span className="font-medium">downward overall but still above goal.</span>
-              </li>
-            </ul>
-          </div>
-
-          {/* Medication & lifestyle links */}
-          <div className="border rounded-lg p-4 bg-emerald-50">
-            <p className="text-sm font-semibold text-emerald-800 mb-2">
-              Meds & lifestyle context
-            </p>
-            <ul className="text-xs text-gray-800 space-y-2 list-disc list-inside">
-              <li>
-                <span className="font-medium">Medication changes:</span> {selectedPatient.medChanges}
-              </li>
-              <li>
-                <span className="font-medium">Lifestyle:</span> {selectedPatient.lifestyle}
-              </li>
-              <li>Consider asking about adherence, sodium intake, and exertional symptoms.</li>
-            </ul>
-          </div>
-        </div>
-
-        {/* Timeline & trends reused from patient view */}
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          <div>
-            <h3 className="text-lg font-semibold text-gray-800 mb-2 flex items-center gap-2">
-              <Activity className="w-5 h-5 text-blue-600" />
-              Blood Pressure Timeline
-            </h3>
-            <div className="bg-gray-50 rounded-lg p-3 border">{renderBPChart()}</div>
-          </div>
-
-        </div>
-
-        {/* Patient Summary from Analysis */}
-        {patientAnalyses[selectedPatientId] && (
-          <div className="mt-6 bg-blue-50 rounded-lg p-6 border border-blue-200">
-            <h3 className="text-lg font-semibold text-gray-800 mb-3 flex items-center gap-2">
-              <MessageCircle className="w-5 h-5 text-blue-600" />
-              AI-Generated Patient Summary
-            </h3>
-            <div className="space-y-3">
-              <div>
-                <p className="text-sm text-gray-700 whitespace-pre-wrap">
-                  {patientAnalyses[selectedPatientId].summary}
-                </p>
-              </div>
-              <div className="flex items-center gap-4 pt-2 border-t border-blue-200">
-                <div>
-                  <span className="text-xs text-gray-600">Urgency: </span>
-                  <span className={`text-sm font-semibold ${
-                    patientAnalyses[selectedPatientId].urgency === "urgent"
-                      ? "text-red-600"
-                      : patientAnalyses[selectedPatientId].urgency === "monitor"
-                      ? "text-amber-600"
-                      : "text-emerald-600"
-                  }`}>
-                    {patientAnalyses[selectedPatientId].urgency.toUpperCase()}
-                  </span>
-                  <span className="text-xs text-gray-500 ml-2">
-                    (Score: {patientAnalyses[selectedPatientId].urgencyScore}/10)
-                  </span>
-                </div>
-              </div>
-              {patientAnalyses[selectedPatientId].reasons.length > 0 && (
-                <div className="pt-2 border-t border-blue-200">
-                  <p className="text-xs font-semibold text-gray-700 mb-1">Key Reasons:</p>
-                  <ul className="text-xs text-gray-600 list-disc list-inside space-y-1">
-                    {patientAnalyses[selectedPatientId].reasons.map((reason, idx) => (
-                      <li key={idx}>{reason}</li>
-                    ))}
-                  </ul>
-                </div>
-              )}
+            <div className="bg-rose-50 rounded-lg p-3 border border-rose-200">
+              <p className="text-sm text-gray-800 mb-1">3-Day Average Diastolic BP</p>
+              <p className="text-lg font-bold text-rose-600">{metrics.avgDia} mmHg</p>
             </div>
           </div>
         )}
+        <ResponsiveContainer width="100%" height={320} style={{ outline: 'none' }}>
+          <LineChart data={bpData} margin={{ top: 40, right: 80, left: 60, bottom: 30 }} style={{ outline: 'none' }}>
+            <CartesianGrid strokeDasharray="3 3" />
+            <XAxis dataKey="readable">
+              <Label value="Date" position="bottom" offset={10} />
+            </XAxis>
+            <YAxis domain={[0, 160]} width={60}>
+              <Label value="Blood Pressure (mmHg)" angle={-90} position="insideLeft" style={{ textAnchor: "middle" }} />
+            </YAxis>
+            <Tooltip content={<CustomTooltip />} />
+            <Legend verticalAlign="top" align="right" wrapperStyle={{ top: 0 }} />
+            {goals && goals.systolicMin !== null && goals.systolicMax !== null && (
+              <ReferenceArea y1={goals.systolicMin} y2={goals.systolicMax} fill="#86efac" fillOpacity={0.3} stroke="none" />
+            )}
+            {goals && goals.diastolicMin !== null && goals.diastolicMax !== null && (
+              <ReferenceArea y1={goals.diastolicMin} y2={goals.diastolicMax} fill="#86efac" fillOpacity={0.3} stroke="none" />
+            )}
+            {getSelectedPatientEventLines(bpData)}
+            <Line type="monotone" dataKey="systolic" stroke="#3b82f6" strokeWidth={3} dot={{ r: 3, fill: "#3b82f6" }} name="Systolic BP" />
+            <Line type="monotone" dataKey="diastolic" stroke="#e11d48" strokeWidth={3} dot={{ r: 3, fill: "#e11d48" }} name="Diastolic BP" />
+          </LineChart>
+        </ResponsiveContainer>
       </div>
-    </div>
-  );
+    );
+  };
+
+  const renderSelectedPatientWeightChart = () => {
+    const { weightData, goals } = prepareSelectedPatientChartData();
+    const profileWeight = selectedPatientDetail?.profile?.weight || null;
+    const patientMetrics = selectedPatientDetail?.metrics;
+
+    if (weightData.length === 0 && !profileWeight) {
+      return (
+        <div className="flex items-center justify-center h-80 bg-gray-50 rounded-lg">
+          <p className="text-gray-500">No weight data available yet.</p>
+        </div>
+      );
+    }
+
+    const weightValues = weightData.length > 0 
+      ? weightData.map(d => d.weight).filter((w): w is number => typeof w === 'number' && !isNaN(w))
+      : profileWeight ? [profileWeight] : [];
+    const minWeight = weightValues.length > 0 ? Math.min(...weightValues) : 150;
+    const maxWeight = weightValues.length > 0 ? Math.max(...weightValues) : 200;
+    const padding = 10;
+    const yMin = Math.max(0, Math.floor((minWeight - padding) / 5) * 5);
+    const yMax = Math.ceil((maxWeight + padding) / 5) * 5;
+    const ticks: number[] = [];
+    for (let i = yMin; i <= yMax; i += 5) {
+      ticks.push(i);
+    }
+
+    const metrics = patientMetrics?.weight ? {
+      change7d: patientMetrics.weight.change7d,
+      weeklyAlert: patientMetrics.weight.weeklyAlert,
+    } : null;
+
+    return (
+      <div>
+        {metrics && (
+          <div className="mb-4 grid grid-cols-1 gap-4">
+            <div className={`rounded-lg p-3 border ${metrics.weeklyAlert ? "bg-red-50 border-red-200" : "bg-teal-50 border-teal-200"}`}>
+              <p className="text-sm text-gray-700 mb-1">7-Day Change</p>
+              <p className={`text-lg font-bold ${metrics.weeklyAlert ? "text-red-700" : "text-teal-700"}`}>
+                {metrics.change7d !== null ? `${metrics.change7d > 0 ? "+" : ""}${metrics.change7d.toFixed(1)} lbs` : "N/A"}
+                {metrics.weeklyAlert && " ⚠️"}
+              </p>
+            </div>
+          </div>
+        )}
+        <ResponsiveContainer width="100%" height={320} style={{ outline: 'none' }}>
+          <LineChart data={weightData} margin={{ top: 60, right: 30, left: 80, bottom: 20 }} style={{ outline: 'none' }}>
+            <CartesianGrid strokeDasharray="3 3" />
+            <XAxis dataKey="readable" />
+            <YAxis domain={[yMin, yMax]} ticks={ticks} width={60}>
+              <Label value="Weight (lbs)" angle={-90} position="insideLeft" style={{ textAnchor: "middle" }} />
+            </YAxis>
+            <Tooltip content={((props: { active?: boolean; payload?: Array<{ payload: { readable: string; weight: number } }> }) => {
+              if (props.active && props.payload && props.payload.length) {
+                const data = props.payload[0].payload;
+                return (
+                  <div className="bg-white p-3 border border-gray-300 rounded shadow-lg">
+                    <p className="font-semibold">{data.readable}</p>
+                    <p className="text-teal-600">Weight: {data.weight} lbs</p>
+                  </div>
+                );
+              }
+              return null;
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            }) as any} />
+            {goals && goals.weightBaseline !== null && (
+              <ReferenceLine y={goals.weightBaseline} stroke="#10b981" strokeDasharray="3 3" label={{ value: "Baseline", position: "right" }} />
+            )}
+            {getSelectedPatientEventLines(weightData)}
+            <Line type="monotone" dataKey="weight" stroke="#14b8a6" strokeWidth={2} dot={{ r: 4, fill: "#14b8a6" }} name="Weight" />
+          </LineChart>
+        </ResponsiveContainer>
+      </div>
+    );
+  };
+
+  const renderSelectedPatientGlucoseChart = () => {
+    const { glucoseData, goals } = prepareSelectedPatientChartData();
+    const patientMetrics = selectedPatientDetail?.metrics;
+
+    if (glucoseData.length === 0) {
+      return (
+        <div className="flex items-center justify-center h-80 bg-gray-50 rounded-lg">
+          <p className="text-gray-500">No glucose data available yet.</p>
+        </div>
+      );
+    }
+
+    const glucoseValues = glucoseData.map(d => d.glucose).filter((g): g is number => typeof g === 'number' && !isNaN(g));
+    const minGlucose = glucoseValues.length > 0 ? Math.min(...glucoseValues) : 80;
+    const maxGlucose = glucoseValues.length > 0 ? Math.max(...glucoseValues) : 200;
+    const padding = 20;
+    const yMin = Math.max(0, Math.floor((minGlucose - padding) / 10) * 10);
+    const yMax = Math.ceil((maxGlucose + padding) / 10) * 10;
+    const finalYMin = goals && goals.glucoseMin !== null ? Math.min(yMin, Math.floor((goals.glucoseMin - padding) / 10) * 10) : yMin;
+    const finalYMax = goals && goals.glucoseMax !== null ? Math.max(yMax, Math.ceil((goals.glucoseMax + padding) / 10) * 10) : yMax;
+    const ticks: number[] = [];
+    for (let i = finalYMin; i <= finalYMax; i += 10) {
+      ticks.push(i);
+    }
+
+    const metrics = patientMetrics?.glucose ? {
+      percentInRange: patientMetrics.glucose.percentInRange14d,
+      avgGlucose: patientMetrics.glucose.avgGlucose3d,
+    } : null;
+
+    return (
+      <div>
+        {metrics && (
+          <div className="mb-4 grid grid-cols-2 gap-4">
+            <div className="bg-purple-50 rounded-lg p-3 border border-purple-200">
+              <p className="text-sm text-gray-700 mb-1">% of Glucose Readings in Target Range (Last 14 Days)</p>
+              <p className="text-lg font-bold text-purple-700">{metrics.percentInRange}%</p>
+            </div>
+            <div className="bg-purple-50 rounded-lg p-3 border border-purple-200">
+              <p className="text-sm text-gray-700 mb-1">3-Day Average Glucose</p>
+              <p className="text-lg font-bold text-purple-700">{metrics.avgGlucose} mg/dL</p>
+            </div>
+          </div>
+        )}
+        <ResponsiveContainer width="100%" height={320} style={{ outline: 'none' }}>
+          <LineChart data={glucoseData} margin={{ top: 60, right: 30, left: 20, bottom: 20 }} style={{ outline: 'none' }}>
+            <CartesianGrid strokeDasharray="3 3" />
+            <XAxis dataKey="readable" />
+            <YAxis domain={[finalYMin, finalYMax]} ticks={ticks} width={60}>
+              <Label value="Glucose (mg/dL)" angle={-90} position="insideLeft" style={{ textAnchor: "middle" }} />
+            </YAxis>
+            <Tooltip content={((props: { active?: boolean; payload?: Array<{ payload: { readable: string; glucose: number } }> }) => {
+              if (props.active && props.payload && props.payload.length) {
+                const data = props.payload[0].payload;
+                return (
+                  <div className="bg-white p-3 border border-gray-300 rounded shadow-lg">
+                    <p className="font-semibold">{data.readable}</p>
+                    <p className="text-purple-600">Glucose: {data.glucose} mg/dL</p>
+                  </div>
+                );
+              }
+              return null;
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            }) as any} />
+            {goals && goals.glucoseMin !== null && goals.glucoseMax !== null && (
+              <ReferenceArea y1={goals.glucoseMin} y2={goals.glucoseMax} fill="#86efac" fillOpacity={0.3} stroke="none" />
+            )}
+            {getSelectedPatientEventLines(glucoseData)}
+            <Line type="monotone" dataKey="glucose" stroke="#a855f7" strokeWidth={2} dot={{ r: 4, fill: "#a855f7" }} name="Glucose" />
+          </LineChart>
+        </ResponsiveContainer>
+      </div>
+    );
+  };
+
+  // ---------------- PHYSICIAN VIEW ----------------
+  const renderPhysicianView = () => {
+    if (loadingPhysicianPatients) {
+      return (
+        <div className="flex items-center justify-center h-64">
+          <div className="text-center">
+            <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto"></div>
+            <p className="mt-4 text-gray-600">Loading patients...</p>
+          </div>
+        </div>
+      );
+    }
+
+    return (
+      <div className="space-y-6">
+        {/* Dashboard buckets */}
+        <div className="bg-white rounded-lg shadow-md p-6">
+          <div className="flex items-center justify-between mb-4">
+            <h2 className="text-2xl font-bold text-gray-800">Patient Triage Dashboard</h2>
+            <p className="text-sm text-gray-500">Click on a patient card to view detailed information</p>
+          </div>
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+            {/* Urgent */}
+            <div className="border border-red-200 rounded-lg p-3 bg-red-50/40">
+              <p className="text-lg font-semibold text-red-700 mb-2">Urgent</p>
+              <div className="space-y-2">
+                {physicianPatients
+                  .filter((p) => p.urgency === "urgent")
+                  .map((p) => (
+                    <button
+                      key={p.id}
+                      onClick={async () => {
+                        setSelectedPatientId(p.id);
+                        setShowPatientDetail(true);
+                        await fetchPatientDetail(p.id);
+                      }}
+                      className={`w-full text-left p-3 rounded-lg transition-colors ${
+                        selectedPatientId === p.id ? "bg-red-100" : "bg-white hover:bg-red-50"
+                      }`}
+                    >
+                      <p className="font-semibold text-gray-800">{p.name}</p>
+                      <p className="text-sm text-gray-500 mt-1">
+                        {p.conditions.length > 0 ? p.conditions.join(", ") : "No conditions listed"}
+                      </p>
+                      <p className="text-sm text-gray-600 mt-2">{p.summary}</p>
+                      {p.analysisDate && (
+                        <p className="text-sm text-gray-400 mt-1">
+                          {new Date(p.analysisDate).toLocaleDateString()}
+                        </p>
+                      )}
+                    </button>
+                  ))}
+                {physicianPatients.filter((p) => p.urgency === "urgent").length === 0 && (
+                  <p className="text-base text-gray-500 text-center py-4">No urgent patients</p>
+                )}
+              </div>
+            </div>
+
+            {/* Monitor */}
+            <div className="border border-amber-200 rounded-lg p-3 bg-amber-50/40">
+              <p className="text-lg font-semibold text-amber-700 mb-2">Monitor</p>
+              <div className="space-y-2">
+                {physicianPatients
+                  .filter((p) => p.urgency === "monitor")
+                  .map((p) => (
+                    <button
+                      key={p.id}
+                      onClick={async () => {
+                        setSelectedPatientId(p.id);
+                        setShowPatientDetail(true);
+                        await fetchPatientDetail(p.id);
+                      }}
+                      className={`w-full text-left p-3 rounded-lg transition-colors ${
+                        selectedPatientId === p.id ? "bg-amber-100" : "bg-white hover:bg-amber-50"
+                      }`}
+                    >
+                      <p className="font-semibold text-gray-800">{p.name}</p>
+                      <p className="text-sm text-gray-500 mt-1">
+                        {p.conditions.length > 0 ? p.conditions.join(", ") : "No conditions listed"}
+                      </p>
+                      <p className="text-sm text-gray-600 mt-2">{p.summary}</p>
+                      {p.analysisDate && (
+                        <p className="text-sm text-gray-400 mt-1">
+                          {new Date(p.analysisDate).toLocaleDateString()}
+                        </p>
+                      )}
+                    </button>
+                  ))}
+                {physicianPatients.filter((p) => p.urgency === "monitor").length === 0 && (
+                  <p className="text-xs text-gray-500 text-center py-4">No patients to monitor</p>
+                )}
+              </div>
+            </div>
+
+            {/* Stable */}
+            <div className="border border-emerald-200 rounded-lg p-3 bg-emerald-50/40">
+              <p className="text-lg font-semibold text-emerald-700 mb-2">Stable</p>
+              <div className="space-y-2">
+                {physicianPatients
+                  .filter((p) => p.urgency === "stable")
+                  .map((p) => (
+                    <button
+                      key={p.id}
+                      onClick={async () => {
+                        setSelectedPatientId(p.id);
+                        setShowPatientDetail(true);
+                        await fetchPatientDetail(p.id);
+                      }}
+                      className={`w-full text-left p-3 rounded-lg transition-colors ${
+                        selectedPatientId === p.id ? "bg-emerald-100" : "bg-white hover:bg-emerald-50"
+                      }`}
+                    >
+                      <p className="font-semibold text-gray-800">{p.name}</p>
+                      <p className="text-sm text-gray-500 mt-1">
+                        {p.conditions.length > 0 ? p.conditions.join(", ") : "No conditions listed"}
+                      </p>
+                      <p className="text-sm text-gray-600 mt-2">{p.summary}</p>
+                      {p.analysisDate && (
+                        <p className="text-sm text-gray-400 mt-1">
+                          {new Date(p.analysisDate).toLocaleDateString()}
+                        </p>
+                      )}
+                    </button>
+                  ))}
+                {physicianPatients.filter((p) => p.urgency === "stable").length === 0 && (
+                  <p className="text-xs text-gray-500 text-center py-4">No stable patients</p>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Patient Detail View */}
+        {showPatientDetail && selectedPatientDetail && selectedPatientId && (
+          <div className="bg-white rounded-lg shadow-md p-6">
+            {loadingPatientDetail ? (
+              <div className="flex items-center justify-center h-64">
+                <div className="text-center">
+                  <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto"></div>
+                  <p className="mt-4 text-gray-600">Loading patient details...</p>
+                </div>
+              </div>
+            ) : (
+              <>
+                {/* Header */}
+                <div className="mb-6">
+                  <h2 className="text-2xl font-bold text-gray-800 flex items-center gap-2">
+                    <User className="w-6 h-6 text-blue-600" />
+                    {selectedPatientDetail.profile?.name || "Unknown Patient"}
+                  </h2>
+                </div>
+
+                {/* Patient Profile Section */}
+                {selectedPatientDetail.profile && (
+                  <div className="mb-6">
+                    <h3 className="text-lg font-semibold text-gray-800 mb-3">Patient Profile</h3>
+                    <div className="grid grid-cols-2 gap-4">
+                      {/* Left Column */}
+                      <div className="space-y-3">
+                        {selectedPatientDetail.profile.dob && (
+                          <div>
+                            <p className="text-xs text-gray-600">Date of Birth</p>
+                            <p className="text-sm font-medium">{new Date(selectedPatientDetail.profile.dob).toLocaleDateString()}</p>
+                          </div>
+                        )}
+                        {selectedPatientDetail.profile.sex && (
+                          <div>
+                            <p className="text-xs text-gray-600">Sex</p>
+                            <p className="text-sm font-medium">{selectedPatientDetail.profile.sex}</p>
+                          </div>
+                        )}
+                        {selectedPatientDetail.profile.height && (
+                          <div>
+                            <p className="text-xs text-gray-600">Height</p>
+                            <p className="text-sm font-medium">{selectedPatientDetail.profile.height} cm</p>
+                          </div>
+                        )}
+                        {selectedPatientDetail.profile.weight && (
+                          <div>
+                            <p className="text-xs text-gray-600">Weight</p>
+                            <p className="text-sm font-medium">{selectedPatientDetail.profile.weight} lbs</p>
+                          </div>
+                        )}
+                        {selectedPatientDetail.profile.conditions.length > 0 && (
+                          <div>
+                            <p className="text-xs text-gray-600 mb-1">Conditions</p>
+                            <ul className="space-y-0.5">
+                              {selectedPatientDetail.profile.conditions.map((condition, idx) => (
+                                <li key={idx} className="text-sm text-gray-700">
+                                  {condition}
+                                </li>
+                              ))}
+                            </ul>
+                          </div>
+                        )}
+                        {selectedPatientDetail.profile.allergies.length > 0 && (
+                          <div>
+                            <p className="text-xs text-gray-600 mb-1">Allergies</p>
+                            <div className="flex flex-wrap gap-1.5">
+                              {selectedPatientDetail.profile.allergies.map((allergy, idx) => (
+                                <span key={idx} className="px-2 py-0.5 bg-red-100 text-red-800 rounded-full text-xs">
+                                  {allergy}
+                                </span>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                      {/* Right Column */}
+                      <div className="space-y-3">
+                        {selectedPatientDetail.profile.medications.length > 0 && (
+                          <div>
+                            <p className="text-xs text-gray-600 mb-1">Medications</p>
+                            <ul className="space-y-0.5">
+                              {selectedPatientDetail.profile.medications.map((med, idx) => (
+                                <li key={idx} className="text-sm text-gray-700">
+                                  <span className="font-medium">{med.name}</span> - {med.dosage}, {med.frequency}
+                                </li>
+                              ))}
+                            </ul>
+                          </div>
+                        )}
+                        {selectedPatientDetail.profile.familyHistoryHeartDisease && (
+                          <div>
+                            <p className="text-xs text-gray-600">Family History</p>
+                            <p className="text-sm font-medium">{selectedPatientDetail.profile.familyHistoryHeartDisease}</p>
+                          </div>
+                        )}
+                        {selectedPatientDetail.profile.smokingHistory && (
+                          <div>
+                            <p className="text-xs text-gray-600">Smoking History</p>
+                            <p className="text-sm font-medium">{selectedPatientDetail.profile.smokingHistory}</p>
+                            {selectedPatientDetail.profile.smokingDetails && (
+                              <p className="text-xs text-gray-600 mt-0.5">{selectedPatientDetail.profile.smokingDetails}</p>
+                            )}
+                          </div>
+                        )}
+                        {selectedPatientDetail.profile.alcoholUse && (
+                          <div>
+                            <p className="text-xs text-gray-600">Alcohol Use</p>
+                            <p className="text-sm font-medium">{selectedPatientDetail.profile.alcoholUse}</p>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* Summary Section */}
+                {selectedPatientDetail.analysis && (
+                  <div className="mb-6">
+                    <h3 className="text-lg font-semibold text-gray-800 mb-3">Summary</h3>
+                    <p className="text-base text-gray-700">{selectedPatientDetail.analysis.summary}</p>
+                  </div>
+                )}
+
+                {/* Key Concerns Section */}
+                {selectedPatientDetail.analysis && selectedPatientDetail.analysis.reasons.length > 0 && (
+                  <div className="mb-6">
+                    <h3 className="text-lg font-semibold text-gray-800 mb-3">Key Concerns</h3>
+                    <ul className="list-disc list-inside space-y-1">
+                      {selectedPatientDetail.analysis.reasons.map((reason, idx) => (
+                        <li key={idx} className="text-base text-gray-700">{reason}</li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+
+                {/* Timelines Section */}
+                <div className="mb-6 space-y-6">
+                    {/* Blood Pressure Chart */}
+                    <div>
+                      <h3 className="text-lg font-semibold text-gray-800 mb-2">
+                        Blood Pressure Timeline
+                      </h3>
+                      <p className="text-sm text-gray-600 mb-4">
+                        Green shaded band shows the target blood pressure range set for this patient; lines show actual systolic and diastolic readings over time.
+                      </p>
+                      <div className="mb-4">{renderSelectedPatientBPChart()}</div>
+                    </div>
+
+                    {/* Weight Chart */}
+                    <div>
+                      <h3 className="text-lg font-semibold text-gray-800 mb-2">
+                        Weight Timeline
+                      </h3>
+                      <p className="text-sm text-gray-600 mb-4">
+                        Line shows recorded weights over time; alerts are based on 7-day weight change relative to the patient&apos;s baseline.
+                      </p>
+                      <div className="mb-4">{renderSelectedPatientWeightChart()}</div>
+                    </div>
+
+                    {/* Glucose Chart */}
+                    <div>
+                      <h3 className="text-lg font-semibold text-gray-800 mb-2">
+                        Glucose (Fasting) Timeline
+                      </h3>
+                      <p className="text-sm text-gray-600 mb-4">
+                        Green shaded band shows the target fasting glucose range set for this patient; the line shows actual fasting glucose readings over time.
+                      </p>
+                      <div className="mb-4">{renderSelectedPatientGlucoseChart()}</div>
+                    </div>
+                  </div>
+
+                {/* Target Ranges & Thresholds Section */}
+                <div className="mb-6">
+                  <div className="flex items-center justify-between mb-4">
+                    <h3 className="text-lg font-semibold text-gray-800">Target Ranges & Thresholds</h3>
+                    {!editingGoals && (
+                      <button
+                        onClick={() => {
+                          setGoalFormData(selectedPatientDetail.goals ? { ...selectedPatientDetail.goals } : {
+                            systolicMin: null,
+                            systolicMax: null,
+                            diastolicMin: null,
+                            diastolicMax: null,
+                            glucoseMin: null,
+                            glucoseMax: null,
+                            weightBaseline: null,
+                            weightDailyAlertThreshold: null,
+                            weightWeeklyAlertThreshold: null,
+                          });
+                          setEditingGoals(true);
+                        }}
+                        className="px-4 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+                      >
+                        Edit Goals
+                      </button>
+                    )}
+                  </div>
+                  {editingGoals ? (
+                    <div className="space-y-4">
+                      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                        {/* Blood Pressure */}
+                        <div className="space-y-3">
+                          <p className="text-sm font-semibold text-gray-700">Blood Pressure (mmHg)</p>
+                          <div className="space-y-2">
+                            <div>
+                              <label className="text-xs text-gray-600">Systolic Min</label>
+                              <input
+                                type="number"
+                                value={goalFormData?.systolicMin ?? ""}
+                                onChange={(e) => setGoalFormData(prev => prev ? { ...prev, systolicMin: e.target.value ? parseFloat(e.target.value) : null } : null)}
+                                className="w-full px-3 py-2 border rounded-lg text-sm"
+                                placeholder="e.g., 100"
+                              />
+                            </div>
+                            <div>
+                              <label className="text-xs text-gray-600">Systolic Max</label>
+                              <input
+                                type="number"
+                                value={goalFormData?.systolicMax ?? ""}
+                                onChange={(e) => setGoalFormData(prev => prev ? { ...prev, systolicMax: e.target.value ? parseFloat(e.target.value) : null } : null)}
+                                className="w-full px-3 py-2 border rounded-lg text-sm"
+                                placeholder="e.g., 130"
+                              />
+                            </div>
+                            <div>
+                              <label className="text-xs text-gray-600">Diastolic Min</label>
+                              <input
+                                type="number"
+                                value={goalFormData?.diastolicMin ?? ""}
+                                onChange={(e) => setGoalFormData(prev => prev ? { ...prev, diastolicMin: e.target.value ? parseFloat(e.target.value) : null } : null)}
+                                className="w-full px-3 py-2 border rounded-lg text-sm"
+                                placeholder="e.g., 60"
+                              />
+                            </div>
+                            <div>
+                              <label className="text-xs text-gray-600">Diastolic Max</label>
+                              <input
+                                type="number"
+                                value={goalFormData?.diastolicMax ?? ""}
+                                onChange={(e) => setGoalFormData(prev => prev ? { ...prev, diastolicMax: e.target.value ? parseFloat(e.target.value) : null } : null)}
+                                className="w-full px-3 py-2 border rounded-lg text-sm"
+                                placeholder="e.g., 80"
+                              />
+                            </div>
+                          </div>
+                        </div>
+                        {/* Glucose */}
+                        <div className="space-y-3">
+                          <p className="text-sm font-semibold text-gray-700">Glucose (mg/dL)</p>
+                          <div className="space-y-2">
+                            <div>
+                              <label className="text-xs text-gray-600">Min</label>
+                              <input
+                                type="number"
+                                value={goalFormData?.glucoseMin ?? ""}
+                                onChange={(e) => setGoalFormData(prev => prev ? { ...prev, glucoseMin: e.target.value ? parseFloat(e.target.value) : null } : null)}
+                                className="w-full px-3 py-2 border rounded-lg text-sm"
+                                placeholder="e.g., 70"
+                              />
+                            </div>
+                            <div>
+                              <label className="text-xs text-gray-600">Max</label>
+                              <input
+                                type="number"
+                                value={goalFormData?.glucoseMax ?? ""}
+                                onChange={(e) => setGoalFormData(prev => prev ? { ...prev, glucoseMax: e.target.value ? parseFloat(e.target.value) : null } : null)}
+                                className="w-full px-3 py-2 border rounded-lg text-sm"
+                                placeholder="e.g., 100"
+                              />
+                            </div>
+                          </div>
+                        </div>
+                        {/* Weight */}
+                        <div className="space-y-3">
+                          <p className="text-sm font-semibold text-gray-700">Weight (lbs)</p>
+                          <div className="space-y-2">
+                            <div>
+                              <label className="text-xs text-gray-600">Baseline</label>
+                              <input
+                                type="number"
+                                value={goalFormData?.weightBaseline ?? ""}
+                                onChange={(e) => setGoalFormData(prev => prev ? { ...prev, weightBaseline: e.target.value ? parseFloat(e.target.value) : null } : null)}
+                                className="w-full px-3 py-2 border rounded-lg text-sm"
+                                placeholder="e.g., 180"
+                              />
+                            </div>
+                            <div>
+                              <label className="text-xs text-gray-600">Daily Alert Threshold</label>
+                              <input
+                                type="number"
+                                value={goalFormData?.weightDailyAlertThreshold ?? ""}
+                                onChange={(e) => setGoalFormData(prev => prev ? { ...prev, weightDailyAlertThreshold: e.target.value ? parseFloat(e.target.value) : null } : null)}
+                                className="w-full px-3 py-2 border rounded-lg text-sm"
+                                placeholder="e.g., 3"
+                              />
+                            </div>
+                            <div>
+                              <label className="text-xs text-gray-600">Weekly Alert Threshold</label>
+                              <input
+                                type="number"
+                                value={goalFormData?.weightWeeklyAlertThreshold ?? ""}
+                                onChange={(e) => setGoalFormData(prev => prev ? { ...prev, weightWeeklyAlertThreshold: e.target.value ? parseFloat(e.target.value) : null } : null)}
+                                className="w-full px-3 py-2 border rounded-lg text-sm"
+                                placeholder="e.g., 5"
+                              />
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                      <div className="flex gap-2 justify-end">
+                        <button
+                          onClick={() => {
+                            setEditingGoals(false);
+                            setGoalFormData(null);
+                          }}
+                          disabled={savingGoals}
+                          className="px-4 py-2 text-sm bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 transition-colors disabled:opacity-50"
+                        >
+                          Cancel
+                        </button>
+                        <button
+                          onClick={async () => {
+                            if (!goalFormData || !selectedPatientId) return;
+                            try {
+                              setSavingGoals(true);
+                              const response = await fetch("/api/patient/goals", {
+                                method: "POST",
+                                headers: { "Content-Type": "application/json" },
+                                body: JSON.stringify({
+                                  patientId: selectedPatientId,
+                                  ...goalFormData,
+                                }),
+                              });
+                              if (response.ok) {
+                                const data = await response.json();
+                                if (data.success) {
+                                  // Refresh patient detail to get updated goals
+                                  await fetchPatientDetail(selectedPatientId);
+                                  setEditingGoals(false);
+                                  setGoalFormData(null);
+                                }
+                              }
+                            } catch (error) {
+                              console.error("Error saving goals:", error);
+                            } finally {
+                              setSavingGoals(false);
+                            }
+                          }}
+                          disabled={savingGoals}
+                          className="px-4 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50"
+                        >
+                          {savingGoals ? "Saving..." : "Save Changes"}
+                        </button>
+                      </div>
+                    </div>
+                  ) : selectedPatientDetail.goals ? (
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+                      {/* Systolic BP */}
+                      <div>
+                        <p className="text-base text-gray-600 mb-2">Systolic BP</p>
+                        <div className="border-2 border-blue-500 rounded-lg p-3 bg-blue-50">
+                          <p className="text-sm text-gray-600 mb-1">Target Range</p>
+                          <p className="text-lg font-semibold text-blue-700">
+                            {selectedPatientDetail.goals.systolicMin ?? "Not set"} - {selectedPatientDetail.goals.systolicMax ?? "Not set"} mmHg
+                          </p>
+                        </div>
+                      </div>
+                      {/* Diastolic BP */}
+                      <div>
+                        <p className="text-base text-gray-600 mb-2">Diastolic BP</p>
+                        <div className="border-2 border-rose-500 rounded-lg p-3 bg-rose-50">
+                          <p className="text-sm text-gray-600 mb-1">Target Range</p>
+                          <p className="text-lg font-semibold text-rose-700">
+                            {selectedPatientDetail.goals.diastolicMin ?? "Not set"} - {selectedPatientDetail.goals.diastolicMax ?? "Not set"} mmHg
+                          </p>
+                        </div>
+                      </div>
+                      {/* Glucose */}
+                      <div>
+                        <p className="text-base text-gray-600 mb-2">Glucose</p>
+                        <div className="border-2 border-purple-500 rounded-lg p-3 bg-purple-50">
+                          <p className="text-sm text-gray-600 mb-1">Target Range</p>
+                          <p className="text-lg font-semibold text-purple-700">
+                            {selectedPatientDetail.goals.glucoseMin ?? "Not set"} - {selectedPatientDetail.goals.glucoseMax ?? "Not set"} mg/dL
+                          </p>
+                        </div>
+                      </div>
+                      {/* Weight */}
+                      <div>
+                        <p className="text-base text-gray-600 mb-2">Weight</p>
+                        <div className="border-2 border-teal-500 rounded-lg p-3 bg-teal-50">
+                          <p className="text-sm text-gray-600 mb-1">Baseline</p>
+                          <p className="text-lg font-semibold text-teal-700 mb-2">
+                            {selectedPatientDetail.goals.weightBaseline ?? "Not set"} lbs
+                          </p>
+                          <p className="text-sm text-gray-600 mb-1">Daily Alert</p>
+                          <p className="text-lg font-semibold text-teal-700 mb-2">
+                            ±{selectedPatientDetail.goals.weightDailyAlertThreshold ?? "Not set"} lbs
+                          </p>
+                          <p className="text-sm text-gray-600 mb-1">Weekly Alert</p>
+                          <p className="text-lg font-semibold text-teal-700">
+                            ±{selectedPatientDetail.goals.weightWeeklyAlertThreshold ?? "Not set"} lbs
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+                  ) : (
+                    <p className="text-sm text-gray-500">No goals set for this patient.</p>
+                  )}
+                </div>
+              </>
+            )}
+          </div>
+        )}
+      </div>
+    );
+  };
 
   return (
     <div className="min-h-screen bg-gray-50 p-6">
@@ -1846,7 +2649,7 @@ const CardiologyMVP = () => {
             <div className="flex flex-col items-start md:items-end gap-2">
               <div className="flex items-center gap-4">
                 <div className="text-right">
-                  <p className="text-sm font-medium text-gray-800">{session.user?.name}</p>
+                  <p className="text-sm font-medium text-gray-800">{session?.user?.name || "User"}</p>
                   <p className="text-xs text-gray-500 capitalize">{userRole}</p>
                 </div>
                 <button

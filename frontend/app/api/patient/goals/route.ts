@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { auth } from "@/app/api/auth/[...nextauth]/route";
+import { PrismaClientKnownRequestError } from "@prisma/client/runtime/library";
 
 // GET: Fetch goals for a patient
 export async function GET(request: NextRequest) {
@@ -34,6 +35,15 @@ export async function GET(request: NextRequest) {
     });
   } catch (error) {
     console.error("Error fetching goals:", error);
+    if (error instanceof PrismaClientKnownRequestError && error.code === "P1001") {
+      return NextResponse.json(
+        {
+          success: false,
+          error: "Database connection failed. Please check your database configuration.",
+        },
+        { status: 503 }
+      );
+    }
     return NextResponse.json(
       { success: false, error: "Failed to fetch goals" },
       { status: 500 }
@@ -127,6 +137,15 @@ export async function POST(request: NextRequest) {
     });
   } catch (error) {
     console.error("Error setting goals:", error);
+    if (error instanceof PrismaClientKnownRequestError && error.code === "P1001") {
+      return NextResponse.json(
+        {
+          success: false,
+          error: "Database connection failed. Please check your database configuration.",
+        },
+        { status: 503 }
+      );
+    }
     return NextResponse.json(
       { success: false, error: "Failed to set goals" },
       { status: 500 }

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { auth } from "@/app/api/auth/[...nextauth]/route";
+import { PrismaClientKnownRequestError } from "@prisma/client/runtime/library";
 
 // GET: Fetch events for a patient
 export async function GET(request: NextRequest) {
@@ -35,6 +36,15 @@ export async function GET(request: NextRequest) {
     });
   } catch (error) {
     console.error("Error fetching events:", error);
+    if (error instanceof PrismaClientKnownRequestError && error.code === "P1001") {
+      return NextResponse.json(
+        {
+          success: false,
+          error: "Database connection failed. Please check your database configuration.",
+        },
+        { status: 503 }
+      );
+    }
     return NextResponse.json(
       { success: false, error: "Failed to fetch events" },
       { status: 500 }
@@ -75,18 +85,32 @@ export async function POST(request: NextRequest) {
 
     // If physician, verify relationship
     if (userId !== session.user.id) {
-      const relationship = await prisma.physicianPatient.findFirst({
-        where: {
-          physicianId: session.user.id,
-          patientId: userId,
-        },
-      });
+      try {
+        const relationship = await prisma.physicianPatient.findFirst({
+          where: {
+            physicianId: session.user.id,
+            patientId: userId,
+          },
+        });
 
-      if (!relationship) {
-        return NextResponse.json(
-          { success: false, error: "Patient not found or access denied" },
-          { status: 403 }
-        );
+        if (!relationship) {
+          return NextResponse.json(
+            { success: false, error: "Patient not found or access denied" },
+            { status: 403 }
+          );
+        }
+      } catch (dbError) {
+        if (dbError instanceof PrismaClientKnownRequestError && dbError.code === "P1001") {
+          console.error("Database connection error while verifying physician access:", dbError);
+          return NextResponse.json(
+            {
+              success: false,
+              error: "Database connection failed. Please check your database configuration.",
+            },
+            { status: 503 }
+          );
+        }
+        throw dbError;
       }
     }
 
@@ -114,6 +138,15 @@ export async function POST(request: NextRequest) {
     });
   } catch (error) {
     console.error("Error creating event:", error);
+    if (error instanceof PrismaClientKnownRequestError && error.code === "P1001") {
+      return NextResponse.json(
+        {
+          success: false,
+          error: "Database connection failed. Please check your database configuration.",
+        },
+        { status: 503 }
+      );
+    }
     return NextResponse.json(
       { success: false, error: "Failed to create event" },
       { status: 500 }

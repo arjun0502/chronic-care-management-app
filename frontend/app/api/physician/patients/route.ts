@@ -51,13 +51,17 @@ export async function GET(request: NextRequest) {
         const urgency = (analysis?.urgency as "urgent" | "monitor" | "stable") || "stable";
         const summary = analysis?.summary || "No analysis available yet.";
 
+        // Get first sentence of summary for card display
+        const summaryFirstSentence = summary.split(/[.!?]/)[0] + (summary.split(/[.!?]/)[0] === summary ? '' : '.');
+
         return {
           id: patient.id,
           name: patient.name,
           age,
           conditions: patient.conditions || [],
           urgency,
-          summary,
+          summary: summaryFirstSentence,
+          analysisDate: analysis?.updatedAt || analysis?.createdAt || null,
         };
       })
     );

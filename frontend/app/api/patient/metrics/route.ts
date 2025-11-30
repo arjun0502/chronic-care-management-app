@@ -1,4 +1,4 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { auth } from "@/app/api/auth/[...nextauth]/route";
 import {
@@ -6,8 +6,9 @@ import {
   mapGoals,
   mapMeasurements,
 } from "@/lib/metrics";
+import { PrismaClientKnownRequestError } from "@prisma/client/runtime/library";
 
-export async function GET() {
+export async function GET(request: NextRequest) {
   try {
     const session = await auth();
     if (!session?.user?.id) {
@@ -17,7 +18,49 @@ export async function GET() {
       );
     }
 
-    const userId = session.user.id;
+    const { searchParams } = new URL(request.url);
+    const patientId = searchParams.get("patientId") || session.user.id;
+
+    // If requesting another patient's metrics, verify user is a physician
+    if (patientId !== session.user.id && session.user.role !== "physician") {
+      return NextResponse.json(
+        { success: false, error: "Unauthorized to view this patient's metrics" },
+        { status: 403 }
+      );
+    }
+
+    // If physician, verify relationship
+    if (patientId !== session.user.id) {
+      try {
+        const relationship = await prisma.physicianPatient.findFirst({
+          where: {
+            physicianId: session.user.id,
+            patientId: patientId,
+          },
+        });
+
+        if (!relationship) {
+          return NextResponse.json(
+            { success: false, error: "Patient not found or access denied" },
+            { status: 403 }
+          );
+        }
+      } catch (dbError) {
+        if (dbError instanceof PrismaClientKnownRequestError && dbError.code === "P1001") {
+          console.error("Database connection error while verifying physician access:", dbError);
+          return NextResponse.json(
+            {
+              success: false,
+              error: "Database connection failed. Please check your database configuration.",
+            },
+            { status: 503 }
+          );
+        }
+        throw dbError;
+      }
+    }
+
+    const userId = patientId;
 
     const [goalsRecord, measurementRecords] = await Promise.all([
       prisma.goal.findUnique({ where: { userId } }),
@@ -60,6 +103,15 @@ export async function GET() {
     });
   } catch (error) {
     console.error("Error computing patient metrics:", error);
+    if (error instanceof PrismaClientKnownRequestError && error.code === "P1001") {
+      return NextResponse.json(
+        {
+          success: false,
+          error: "Database connection failed. Please check your database configuration.",
+        },
+        { status: 503 }
+      );
+    }
     return NextResponse.json(
       { success: false, error: "Failed to compute patient metrics" },
       { status: 500 }

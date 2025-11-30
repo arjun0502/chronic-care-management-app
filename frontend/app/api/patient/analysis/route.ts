@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/app/api/auth/[...nextauth]/route";
 import { prisma } from "@/lib/prisma";
+import { PrismaClientKnownRequestError } from "@prisma/client/runtime/library";
 
 export async function GET(request: NextRequest) {
   try {
@@ -68,6 +69,15 @@ export async function GET(request: NextRequest) {
     });
   } catch (error) {
     console.error("Error fetching analysis:", error);
+    if (error instanceof PrismaClientKnownRequestError && error.code === "P1001") {
+      return NextResponse.json(
+        {
+          success: false,
+          error: "Database connection failed. Please check your database configuration.",
+        },
+        { status: 503 }
+      );
+    }
     return NextResponse.json(
       { success: false, error: "Failed to fetch analysis" },
       { status: 500 }
