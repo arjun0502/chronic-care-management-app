@@ -17,9 +17,9 @@ import {
   ResponsiveContainer,
   Label,
 } from "recharts";
-import { Calendar, Pill, Activity, User, Heart, MessageCircle, LogOut, Stethoscope } from "lucide-react";
+import { Pill, Activity, User, Heart, MessageCircle, LogOut, Stethoscope } from "lucide-react";
 
-type ActiveTab = "profile" | "data" | "chat" | "timeline";
+type ActiveTab = "profile" | "data" | "chat";
 
 type BpPoint = {
   date: string;
@@ -1236,17 +1236,6 @@ const CardiologyMVP = () => {
             <MessageCircle className="w-5 h-5" />
             <span>Chat</span>
           </button>
-          <button
-            onClick={() => setActiveTab("timeline")}
-            className={`flex items-center space-x-2 px-6 py-4 font-medium transition-colors ${
-              activeTab === "timeline"
-                ? "text-blue-600 border-b-2 border-blue-600"
-                : "text-gray-600 hover:text-gray-800"
-            }`}
-          >
-            <Calendar className="w-5 h-5" />
-            <span>Timeline & Trends</span>
-          </button>
         </div>
       </div>
 
@@ -1602,44 +1591,6 @@ const CardiologyMVP = () => {
         </div>
       )}
 
-      {/* Timeline Tab */}
-      {activeTab === "timeline" && (
-        <div className="space-y-6">
-          {/* Blood Pressure Chart */}
-          <div className="bg-white rounded-lg shadow-md p-6">
-            <h2 className="text-2xl font-bold text-gray-800 mb-2">
-              Blood Pressure Timeline
-            </h2>
-            <p className="text-sm text-gray-600 mb-4">
-              Green shaded band shows the target blood pressure range set for this patient; lines show actual systolic and diastolic readings over time.
-            </p>
-            <div className="mb-4">{renderBPChart()}</div>
-          </div>
-
-          {/* Weight Chart */}
-          <div className="bg-white rounded-lg shadow-md p-6">
-            <h2 className="text-2xl font-bold text-gray-800 mb-2">
-              Weight Timeline
-            </h2>
-            <p className="text-sm text-gray-600 mb-4">
-              Line shows recorded weights over time; alerts are based on 7-day weight change relative to the patient&apos;s baseline.
-            </p>
-            <div className="mb-4">{renderWeightChart()}</div>
-          </div>
-
-          {/* Glucose Chart */}
-          <div className="bg-white rounded-lg shadow-md p-6">
-            <h2 className="text-2xl font-bold text-gray-800 mb-2">
-              Glucose (Fasting) Timeline
-            </h2>
-            <p className="text-sm text-gray-600 mb-4">
-              Green shaded band shows the target fasting glucose range set for this patient; the line shows actual fasting glucose readings over time.
-            </p>
-            <div className="mb-4">{renderGlucoseChart()}</div>
-          </div>
-
-        </div>
-      )}
 
       {/* Event Details Popup */}
       {selectedEvent && (
@@ -2133,7 +2084,7 @@ const CardiologyMVP = () => {
                     </button>
                   ))}
                 {physicianPatients.filter((p) => p.urgency === "urgent").length === 0 && (
-                  <p className="text-base text-gray-500 text-center py-4">No urgent patients</p>
+                  <p className="text-lg text-gray-500 text-center py-4">No urgent patients</p>
                 )}
               </div>
             </div>
@@ -2169,7 +2120,7 @@ const CardiologyMVP = () => {
                     </button>
                   ))}
                 {physicianPatients.filter((p) => p.urgency === "monitor").length === 0 && (
-                  <p className="text-xs text-gray-500 text-center py-4">No patients to monitor</p>
+                  <p className="text-lg text-gray-500 text-center py-4">No patients to monitor</p>
                 )}
               </div>
             </div>
@@ -2205,7 +2156,7 @@ const CardiologyMVP = () => {
                     </button>
                   ))}
                 {physicianPatients.filter((p) => p.urgency === "stable").length === 0 && (
-                  <p className="text-xs text-gray-500 text-center py-4">No stable patients</p>
+                  <p className="text-lg text-gray-500 text-center py-4">No stable patients</p>
                 )}
               </div>
             </div>
