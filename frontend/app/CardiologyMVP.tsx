@@ -146,7 +146,7 @@ const CardiologyMVP = () => {
   const [loadingChat, setLoadingChat] = useState(true);
 
   // State for patient analyses (physician view) - must be before any returns
-  const [patientAnalyses, setPatientAnalyses] = useState<Record<string, {
+  const [patientAnalyses] = useState<Record<string, {
     summary: string;
     urgency: "urgent" | "monitor" | "stable";
     urgencyScore: number;
@@ -406,34 +406,6 @@ const CardiologyMVP = () => {
       </div>
     );
   }
-
-  // Get latest measurements for current metrics
-  const getLatestMeasurement = () => {
-    if (historicalMeasurements.length === 0) return null;
-    return historicalMeasurements[0]; // Already sorted by date desc
-  };
-
-  const latestMeasurement = getLatestMeasurement();
-  
-  // Calculate current metrics from latest measurement, with weight fallback to profile weight
-  // Separate systolic and diastolic for BP
-  const currentMetrics = latestMeasurement ? {
-    weight: latestMeasurement.weight 
-      ? `${Math.round(latestMeasurement.weight)} lbs`
-      : (patientProfile?.weight ? `${Math.round(patientProfile.weight)} lbs` : "N/A"),
-    systolic: latestMeasurement.systolic 
-      ? `${Math.round(latestMeasurement.systolic)} mmHg`
-      : "N/A",
-    diastolic: latestMeasurement.diastolic 
-      ? `${Math.round(latestMeasurement.diastolic)} mmHg`
-      : "N/A",
-    glucose: latestMeasurement.glucose ? `${Math.round(latestMeasurement.glucose)} mg/dL` : "N/A",
-  } : {
-    weight: patientProfile?.weight ? `${Math.round(patientProfile.weight)} lbs` : "N/A",
-    systolic: "N/A",
-    diastolic: "N/A",
-    glucose: "N/A",
-  };
 
   // Use personalized goals from database (Goal table). If goals don't exist at all,
   // fall back to reasonable defaults, but never override what is stored in the DB.

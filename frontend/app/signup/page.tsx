@@ -70,7 +70,7 @@ export default function SignupPage() {
       } else {
         setError(data.error || "Failed to create account");
       }
-    } catch (error) {
+    } catch {
       setError("An error occurred. Please try again.");
     } finally {
       setLoading(false);

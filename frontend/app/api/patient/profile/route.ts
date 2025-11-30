@@ -3,6 +3,25 @@ import { prisma } from "@/lib/prisma";
 import { auth } from "@/app/api/auth/[...nextauth]/route";
 import { Medication } from "@prisma/client";
 
+// Type-safe helper to map goals with all properties
+function mapGoals(goals: unknown) {
+  if (!goals || typeof goals !== 'object') return null;
+  
+  const g = goals as Record<string, unknown>;
+  
+  return {
+    systolicMin: (g.systolicMin as number | null) ?? null,
+    systolicMax: (g.systolicMax as number | null) ?? null,
+    diastolicMin: (g.diastolicMin as number | null) ?? null,
+    diastolicMax: (g.diastolicMax as number | null) ?? null,
+    glucoseMin: (g.glucoseMin as number | null) ?? null,
+    glucoseMax: (g.glucoseMax as number | null) ?? null,
+    weightBaseline: (g.weightBaseline as number | null) ?? null,
+    weightDailyAlertThreshold: (g.weightDailyAlertThreshold as number | null) ?? null,
+    weightWeeklyAlertThreshold: (g.weightWeeklyAlertThreshold as number | null) ?? null,
+  };
+}
+
 export async function GET() {
   try {
     // Get authenticated user
@@ -87,17 +106,7 @@ export async function GET() {
           name: primaryPhysician.name,
           email: primaryPhysician.email,
         } : null,
-        goals: user.goals ? {
-          systolicMin: user.goals.systolicMin,
-          systolicMax: user.goals.systolicMax,
-          diastolicMin: user.goals.diastolicMin,
-          diastolicMax: user.goals.diastolicMax,
-          glucoseMin: user.goals.glucoseMin,
-          glucoseMax: user.goals.glucoseMax,
-          weightBaseline: user.goals.weightBaseline,
-          weightDailyAlertThreshold: user.goals.weightDailyAlertThreshold,
-          weightWeeklyAlertThreshold: user.goals.weightWeeklyAlertThreshold,
-        } : null,
+        goals: mapGoals(user.goals),
       },
     });
   } catch (error) {
