@@ -24,8 +24,8 @@ type ActiveTab = "profile" | "data" | "chat" | "timeline";
 
 type BpPoint = {
   date: string;
-  systolic: number;
-  diastolic: number;
+  systolic: number | null;
+  diastolic: number | null;
   readable: string;
   timestamp: number;
   event?: string;
@@ -467,7 +467,34 @@ const CardiologyMVP = () => {
   // For weight: use measurement weight or fallback to profile weight
   const profileWeight = patientProfile?.weight || null;
   
-  const bpData: BpPoint[] = historicalMeasurements
+  // Helper function to merge measurement data with event dates
+  // This ensures events appear on charts even if there are no measurements for that date
+  const mergeDataWithEvents = <T extends { timestamp: number; readable: string }>(
+    measurementData: T[],
+    getEventPlaceholder: (eventDate: Date) => T
+  ): T[] => {
+    // Create a map of measurement dates (by YYYY-MM-DD string)
+    const measurementDateMap = new Map<string, T>();
+    measurementData.forEach(point => {
+      const dateStr = new Date(point.timestamp).toISOString().split('T')[0];
+      measurementDateMap.set(dateStr, point);
+    });
+
+    // Add event dates that don't have measurements
+    events.forEach(event => {
+      const eventDate = new Date(event.date);
+      const eventDateStr = eventDate.toISOString().split('T')[0];
+      if (!measurementDateMap.has(eventDateStr)) {
+        measurementDateMap.set(eventDateStr, getEventPlaceholder(eventDate));
+      }
+    });
+
+    // Convert map back to array and sort by timestamp
+    return Array.from(measurementDateMap.values()).sort((a, b) => a.timestamp - b.timestamp);
+  };
+
+  // Build BP data with events
+  const bpDataRaw: BpPoint[] = historicalMeasurements
     .filter(m => m.systolic !== null && m.diastolic !== null)
     .slice(0, 20) // Last 20 measurements
     .reverse() // Oldest first for chart
@@ -480,12 +507,20 @@ const CardiologyMVP = () => {
         systolic: m.systolic as number,
         diastolic: m.diastolic as number,
         readable: date.toLocaleDateString("en-US", { month: "short", day: "numeric" }),
-        timestamp: date.getTime(), // For event line positioning
+        timestamp: date.getTime(),
       };
     });
 
+  const bpData: BpPoint[] = mergeDataWithEvents(bpDataRaw, (eventDate) => ({
+    date: `${eventDate.getMonth() + 1}/${eventDate.getDate()}`,
+    systolic: null, // Placeholder - will be skipped by chart line
+    diastolic: null,
+    readable: eventDate.toLocaleDateString("en-US", { month: "short", day: "numeric" }),
+    timestamp: eventDate.getTime(),
+  }));
+
   // Weight chart data (use measurement weight, fallback to profile weight if available)
-  const weightData = historicalMeasurements
+  const weightDataRaw = historicalMeasurements
     .filter(m => m.weight !== null || profileWeight !== null)
     .slice(0, 20)
     .reverse()
@@ -499,8 +534,15 @@ const CardiologyMVP = () => {
       };
     });
 
+  const weightData = mergeDataWithEvents(weightDataRaw, (eventDate) => ({
+    date: `${eventDate.getMonth() + 1}/${eventDate.getDate()}`,
+    weight: null as number | null, // Placeholder - will be skipped by chart line
+    readable: eventDate.toLocaleDateString("en-US", { month: "short", day: "numeric" }),
+    timestamp: eventDate.getTime(),
+  }));
+
   // Glucose chart data
-  const glucoseData = historicalMeasurements
+  const glucoseDataRaw = historicalMeasurements
     .filter(m => m.glucose !== null)
     .slice(0, 20)
     .reverse()
@@ -513,6 +555,13 @@ const CardiologyMVP = () => {
         timestamp: date.getTime(),
       };
     });
+
+  const glucoseData = mergeDataWithEvents(glucoseDataRaw, (eventDate) => ({
+    date: `${eventDate.getMonth() + 1}/${eventDate.getDate()}`,
+    glucose: null as number | null, // Placeholder - will be skipped by chart line
+    readable: eventDate.toLocaleDateString("en-US", { month: "short", day: "numeric" }),
+    timestamp: eventDate.getTime(),
+  }));
 
   // Physician dashboard patients
   const physicianPatients: {
@@ -597,6 +646,13 @@ const CardiologyMVP = () => {
     const firstDate = getDateString(chartData[0].timestamp);
     const lastDate = getDateString(chartData[chartData.length - 1].timestamp);
     
+    // Create a map of chart data points by date string for quick lookup
+    const chartDataMap = new Map<string, ChartDataPoint>();
+    chartData.forEach(point => {
+      const dateStr = getDateString(point.timestamp);
+      chartDataMap.set(dateStr, point);
+    });
+    
     return events
       .filter((event) => {
         const eventDate = getDateString(event.date);
@@ -605,18 +661,19 @@ const CardiologyMVP = () => {
       })
       .map((event) => {
         const eventDate = new Date(event.date);
-        // Find the index in chartData closest to this event
-        const closestIndex = chartData.reduce((closest, point, index) => {
-          const eventTime = eventDate.getTime();
-          const currentDiff = Math.abs(point.timestamp - eventTime);
-          const closestDiff = Math.abs(chartData[closest].timestamp - eventTime);
-          return currentDiff < closestDiff ? index : closest;
-        }, 0);
+        const eventDateStr = getDateString(event.date);
+        // Find the chart data point for this exact event date
+        // Since we now include event dates in chart data, this should always exist
+        const chartPoint = chartDataMap.get(eventDateStr);
+        const eventReadable = eventDate.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+        
+        // Use the chart point's readable if found, otherwise use the formatted event date
+        const xValue = chartPoint?.readable || eventReadable;
         
         return (
           <ReferenceLine
             key={event.id}
-            x={chartData[closestIndex]?.readable}
+            x={xValue}
             stroke="#f59e0b"
             strokeWidth={2}
             strokeDasharray="5 5"
@@ -672,13 +729,17 @@ const CardiologyMVP = () => {
 
     if (bpData.length === 0) return null;
     
-    const last14Days = bpData.slice(0, 14); // Most recent 14 days
-    const last3Days = bpData.slice(0, 3);
+    // Filter out null values (event-only dates)
+    const validBpData = bpData.filter(point => point.systolic !== null && point.diastolic !== null);
+    if (validBpData.length === 0) return null;
+    
+    const last14Days = validBpData.slice(0, 14); // Most recent 14 days
+    const last3Days = validBpData.slice(0, 3);
     
     // Count measurements in target range
     const inRangeCount = last14Days.filter(point => {
-      const sysInRange = point.systolic >= goals.systolicMin && point.systolic <= goals.systolicMax;
-      const diaInRange = point.diastolic >= goals.diastolicMin && point.diastolic <= goals.diastolicMax;
+      const sysInRange = point.systolic! >= goals.systolicMin && point.systolic! <= goals.systolicMax;
+      const diaInRange = point.diastolic! >= goals.diastolicMin && point.diastolic! <= goals.diastolicMax;
       return sysInRange && diaInRange;
     }).length;
     
@@ -686,10 +747,10 @@ const CardiologyMVP = () => {
     
     // Calculate 3-day averages
     const avgSys = last3Days.length > 0 
-      ? Math.round(last3Days.reduce((sum, p) => sum + p.systolic, 0) / last3Days.length)
+      ? Math.round(last3Days.reduce((sum, p) => sum + p.systolic!, 0) / last3Days.length)
       : 0;
     const avgDia = last3Days.length > 0
-      ? Math.round(last3Days.reduce((sum, p) => sum + p.diastolic, 0) / last3Days.length)
+      ? Math.round(last3Days.reduce((sum, p) => sum + p.diastolic!, 0) / last3Days.length)
       : 0;
     
     return { percentInRange, avgSys, avgDia };
@@ -780,6 +841,7 @@ const CardiologyMVP = () => {
               strokeWidth={3}
               dot={{ r: 3, fill: "#3b82f6" }}
               name="Systolic BP"
+              connectNulls={false}
             />
             <Line
               type="monotone"
@@ -788,6 +850,7 @@ const CardiologyMVP = () => {
               strokeWidth={3}
               dot={{ r: 3, fill: "#f97316" }}
               name="Diastolic BP"
+              connectNulls={false}
             />
           </LineChart>
         </ResponsiveContainer>
@@ -916,6 +979,7 @@ const CardiologyMVP = () => {
               strokeWidth={3}
               dot={{ r: 3, fill: "#0ea5e9" }}
               name="Weight"
+              connectNulls={false}
             />
           </LineChart>
         </ResponsiveContainer>
@@ -927,19 +991,23 @@ const CardiologyMVP = () => {
   const calculateGlucoseMetrics = () => {
     if (glucoseData.length === 0) return null;
     
-    const last14Days = glucoseData.slice(0, 14); // Most recent 14 days
-    const last3Days = glucoseData.slice(0, 3);
+    // Filter out null values (event-only dates)
+    const validGlucoseData = glucoseData.filter(point => point.glucose !== null);
+    if (validGlucoseData.length === 0) return null;
+    
+    const last14Days = validGlucoseData.slice(0, 14); // Most recent 14 days
+    const last3Days = validGlucoseData.slice(0, 3);
     
     // Count measurements in target range
     const inRangeCount = last14Days.filter(point => {
-      return point.glucose >= goals.glucoseMin && point.glucose <= goals.glucoseMax;
+      return point.glucose! >= goals.glucoseMin && point.glucose! <= goals.glucoseMax;
     }).length;
     
     const percentInRange = last14Days.length > 0 ? Math.round((inRangeCount / last14Days.length) * 100) : 0;
     
     // Calculate 3-day average
     const avgGlucose = last3Days.length > 0 
-      ? Math.round(last3Days.reduce((sum, p) => sum + p.glucose, 0) / last3Days.length)
+      ? Math.round(last3Days.reduce((sum, p) => sum + p.glucose!, 0) / last3Days.length)
       : 0;
     
     return { percentInRange, avgGlucose };
@@ -1034,6 +1102,7 @@ const CardiologyMVP = () => {
               strokeWidth={3}
               dot={{ r: 2, fill: "#a855f7" }}
               name="Glucose"
+              connectNulls={false}
             />
           </LineChart>
         </ResponsiveContainer>
