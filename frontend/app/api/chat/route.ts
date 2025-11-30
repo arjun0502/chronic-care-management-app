@@ -720,8 +720,6 @@ Urgency Guidelines:
             date: eventDate,
             title: event.title,
             description: event.description || null,
-            type: event.type || null,
-            severity: event.severity || null,
             source: "chat_analysis",
           },
         });
