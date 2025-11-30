@@ -714,25 +714,16 @@ Urgency Guidelines:
         }
         eventDate.setHours(0, 0, 0, 0);
 
-        const lifestyleChanges = Array.isArray(event.lifestyleChanges)
-          ? event.lifestyleChanges.map((v: unknown) => String(v))
-          : [];
-        const medicationChanges = Array.isArray(event.medicationChanges)
-          ? event.medicationChanges.map((v: unknown) => String(v))
-          : [];
-
-        const eventData: Prisma.EventCreateInput = {
-          user: { connect: { id: userId } },
-          date: eventDate,
-          title: event.title,
-          description: event.description || null,
-          lifestyleChanges,
-          medicationChanges,
-          source: "chat_analysis",
-        };
-
         await prisma.event.create({
-          data: eventData,
+          data: {
+            userId,
+            date: eventDate,
+            title: event.title,
+            description: event.description || null,
+            type: event.type || null,
+            severity: event.severity || null,
+            source: "chat_analysis",
+          },
         });
       }
     }
