@@ -2593,8 +2593,8 @@ const CardiologyMVP = () => {
                 <Heart className="w-8 h-8 text-blue-600" />
               </div>
               <div>
-                <h1 className="text-3xl font-bold text-gray-800">CardioCare</h1>
-                <p className="text-gray-600">AI-Powered Chronic Care Management for Cardiovascular Conditions</p>
+                <h1 className="text-3xl font-bold text-gray-800">ChronicTrack</h1>
+                <p className="text-gray-600">AI-Powered Chronic Care Management</p>
               </div>
             </div>
             <div className="flex flex-col items-start md:items-end gap-2">
