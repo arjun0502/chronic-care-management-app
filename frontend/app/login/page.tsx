@@ -42,7 +42,7 @@ export default function LoginPage() {
             <Heart className="w-8 h-8 text-blue-600" />
           </div>
         </div>
-        <h1 className="text-2xl font-bold text-center mb-2">ChronicTrack</h1>
+        <h1 className="text-2xl font-bold text-center mb-2">CardioCare</h1>
         <p className="text-gray-600 text-center mb-6">Sign in to your account</p>
         
         <form onSubmit={handleSubmit} className="space-y-4">
