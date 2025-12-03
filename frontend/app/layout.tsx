@@ -15,7 +15,7 @@ const geistMono = Geist_Mono({
 
 export const metadata: Metadata = {
   title: "CardioCare",
-  description: "AI-Powered Chronic Care Management for Cardiovascular Diseases",
+  description: "AI-Powered Chronic Care Management for Cardiovascular Conditions",
 };
 
 export default function RootLayout({
